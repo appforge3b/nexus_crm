@@ -1,0 +1,14 @@
+{
+  "name": "nexus-crm",
+  "private": true,
+  "type": "module",
+  "description": "NEXUS sales cockpit. The shipped app is vanilla HTML/CSS/JS with no runtime dependencies. Vitest is a dev-only test runner.",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0",
+    "vitest": "^3.2.4"
+  }
+}

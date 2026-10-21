@@ -1,0 +1,164 @@
+import { seedDemoData } from './seed.js';
+import { defaultSettings } from './settings.js';
+import { validateImport } from './validation.js';
+
+export const STORAGE_KEY = 'nexus_data';
+export const COLLECTIONS = ['contacts', 'deals', 'activities', 'customers', 'orders', 'tags'];
+
+function emptyState() {
+  return {
+    contacts: [],
+    deals: [],
+    activities: [],
+    customers: [],
+    orders: [],
+    tags: [],
+    settings: defaultSettings(),
+    version: 1,
+  };
+}
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+export class Store {
+  constructor({ storage, clock, seed = false } = {}) {
+    this.storage = storage;
+    this.clock = clock ?? { now: () => new Date() };
+    this.listeners = new Set();
+    this.state = this.#load(seed);
+    this.#persist();
+  }
+
+  #load(seed) {
+    const raw = this.storage.getItem(STORAGE_KEY);
+    if (raw == null) return seed ? seedDemoData(this.clock.now()) : emptyState();
+    try {
+      const parsed = JSON.parse(raw);
+      const result = validateImport(parsed);
+      if (!result.ok) throw new Error('invalid');
+      return parsed;
+    } catch {
+      return seed ? seedDemoData(this.clock.now()) : emptyState();
+    }
+  }
+
+  #persist() {
+    this.storage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+  }
+
+  #notify(event) {
+    for (const listener of [...this.listeners]) listener(event);
+  }
+
+  #assert(collection) {
+    if (!COLLECTIONS.includes(collection)) throw new Error(`unknown collection: ${collection}`);
+  }
+
+  getAll(collection) {
+    this.#assert(collection);
+    return clone(this.state[collection]);
+  }
+
+  getById(collection, id) {
+    this.#assert(collection);
+    const found = this.state[collection].find((item) => item.id === id);
+    return found ? clone(found) : null;
+  }
+
+  create(collection, data) {
+    this.#assert(collection);
+    const now = this.clock.now().toISOString();
+    const entity = {
+      ...clone(data),
+      id: crypto.randomUUID(),
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.state[collection].push(entity);
+    this.#persist();
+    this.#notify({ type: 'create', collection, id: entity.id });
+    return clone(entity);
+  }
+
+  update(collection, id, data) {
+    this.#assert(collection);
+    const index = this.state[collection].findIndex((item) => item.id === id);
+    if (index < 0) return null;
+    const current = this.state[collection][index];
+    const next = {
+      ...current,
+      ...clone(data),
+      id: current.id,
+      createdAt: current.createdAt,
+      updatedAt: this.clock.now().toISOString(),
+    };
+    this.state[collection][index] = next;
+    this.#persist();
+    this.#notify({ type: 'update', collection, id });
+    return clone(next);
+  }
+
+  delete(collection, id) {
+    this.#assert(collection);
+    const index = this.state[collection].findIndex((item) => item.id === id);
+    if (index < 0) return false;
+    this.state[collection].splice(index, 1);
+    this.#persist();
+    this.#notify({ type: 'delete', collection, id });
+    return true;
+  }
+
+  query(collection, filterFn) {
+    return this.getAll(collection).filter(filterFn);
+  }
+
+  exportAll() {
+    return JSON.stringify(this.state);
+  }
+
+  importAll(jsonString) {
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonString);
+    } catch {
+      throw new Error('invalid JSON');
+    }
+    if (!validateImport(parsed).ok) throw new Error('invalid import');
+    this.state = parsed;
+    this.#persist();
+    this.#notify({ type: 'import', collection: null, id: null });
+  }
+
+  getSettings() {
+    return clone(this.state.settings);
+  }
+
+  updateSettings(partial) {
+    this.state.settings = { ...this.state.settings, ...clone(partial) };
+    this.#persist();
+    this.#notify({ type: 'update', collection: 'settings', id: null });
+    return this.getSettings();
+  }
+
+  subscribe(callback) {
+    this.listeners.add(callback);
+  }
+
+  unsubscribe(callback) {
+    this.listeners.delete(callback);
+  }
+
+  clearAll() {
+    this.state = emptyState();
+    this.#persist();
+    this.#notify({ type: 'clear', collection: null, id: null });
+  }
+
+  resetDemo() {
+    this.state = seedDemoData(this.clock.now());
+    this.#persist();
+    this.#notify({ type: 'reset', collection: null, id: null });
+  }
+}

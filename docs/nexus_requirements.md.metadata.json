@@ -1,0 +1,5 @@
+{
+  "summary": "Exhaustive Product Requirements Document (PRD) for NEXUS CRM. Covers every view, feature, data model, interaction, animation, and acceptance criterion in granular detail. Organized as: Global Requirements (design system, navigation, data layer, keyboard shortcuts), then per-view requirements with numbered acceptance criteria for each feature. Includes full database schema, priority engine algorithm, relationship strength formula, and responsive breakpoint specifications. Designed as a standalone spec that another agent can use to build the complete app without ambiguity.",
+  "updatedAt": "2026-10-21T15:53:45.481824700Z",
+  "userFacing": true
+}
