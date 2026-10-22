@@ -8,6 +8,7 @@ NEXUS is an ultra-fast, zero-runtime-dependency sales command center built with 
 
 ## 🌟 Table of Contents
 - [Executive Overview](#executive-overview)
+- [📖 Enterprise User Operations Guide](docs/USER_GUIDE.md) *(Step-by-step setup, workflows, and visual screenshots)*
 - [Key Business Scenarios](#key-business-scenarios)
 - [Feature Walkthrough](#feature-walkthrough)
 - [Technical Architecture](#technical-architecture)
