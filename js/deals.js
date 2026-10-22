@@ -36,11 +36,15 @@ export function moveDeal(store, dealId, nextStage, options = {}) {
     return { ok: false, needsLostReason: true };
   }
   const now = options.now ?? new Date();
+  const history = Array.isArray(deal.stageHistory) && deal.stageHistory.length
+    ? deal.stageHistory
+    : [{ stage: deal.stage, at: deal.stageChangedAt || deal.createdAt }];
   store.update('deals', dealId, {
     stage: nextStage,
     probability: nextProbability(deal.stage, nextStage, deal.probability),
     lostReason: nextStage === 'lost' ? options.lostReason : deal.lostReason,
     stageChangedAt: now.toISOString(),
+    stageHistory: [...history, { stage: nextStage, at: now.toISOString() }],
   });
   const existing = store.query('customers', (customer) => customer.contactId === deal.contactId);
   const contact = store.getById('contacts', deal.contactId);

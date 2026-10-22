@@ -26,7 +26,15 @@
   --transition-fast: 150ms ease;
   --transition-normal: 250ms ease;
   --transition-slow: 400ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --emerald-gradient: linear-gradient(135deg, #10b981, #059669);
+  --panel-solid: rgba(18, 18, 28, 0.72);
+  --shadow-panel: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 32px rgba(0, 0, 0, 0.28);
+  --shadow-pop: 0 30px 80px rgba(0, 0, 0, 0.6);
+  --accent-soft: #a5b4fc;
   --call: #3b82f6;
   --note: #64748b;
-  --sidebar: 240px;
+  --sidebar: 100px;
+  --sidebar-collapsed: 72px;
 }

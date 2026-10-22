@@ -23,16 +23,17 @@ function clone(value) {
 }
 
 export class Store {
-  constructor({ storage, clock, seed = false } = {}) {
+  constructor({ storage, clock, seed = false, storageKey = STORAGE_KEY } = {}) {
     this.storage = storage;
     this.clock = clock ?? { now: () => new Date() };
+    this.storageKey = storageKey;
     this.listeners = new Set();
     this.state = this.#load(seed);
     this.#persist();
   }
 
   #load(seed) {
-    const raw = this.storage.getItem(STORAGE_KEY);
+    const raw = this.storage.getItem(this.storageKey);
     if (raw == null) return seed ? seedDemoData(this.clock.now()) : emptyState();
     try {
       const parsed = JSON.parse(raw);
@@ -45,7 +46,7 @@ export class Store {
   }
 
   #persist() {
-    this.storage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+    this.storage.setItem(this.storageKey, JSON.stringify(this.state));
   }
 
   #notify(event) {

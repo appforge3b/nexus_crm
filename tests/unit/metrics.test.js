@@ -118,7 +118,7 @@ describe('radar aggregations', () => {
     expect(presetRange('last-3-months', NOW).end).toEqual(NOW);
   });
 
-  it('builds a cumulative funnel that ignores lost deals', () => {
+  it('builds a cumulative funnel with counts and values that ignores lost deals', () => {
     const deals = [
       ['p1', 'prospect'], ['p2', 'prospect'],
       ['q1', 'qualified'], ['q2', 'qualified'],
@@ -133,20 +133,20 @@ describe('radar aggregations', () => {
       stageChangedAt: NOW.toISOString(),
     }));
     expect(funnelModel(deals)).toEqual([
-      { stage: 'prospect', count: 6, percent: 100 },
-      { stage: 'qualified', count: 4, percent: 67 },
-      { stage: 'proposal', count: 2, percent: 33 },
-      { stage: 'negotiation', count: 2, percent: 33 },
-      { stage: 'closing', count: 1, percent: 17 },
-      { stage: 'won', count: 1, percent: 17 },
+      { stage: 'prospect', count: 6, value: 6, percent: 100 },
+      { stage: 'qualified', count: 4, value: 4, percent: 67 },
+      { stage: 'proposal', count: 2, value: 2, percent: 33 },
+      { stage: 'negotiation', count: 2, value: 2, percent: 33 },
+      { stage: 'closing', count: 1, value: 1, percent: 17 },
+      { stage: 'won', count: 1, value: 1, percent: 17 },
     ]);
     expect(funnelModel([])).toEqual([
-      { stage: 'prospect', count: 0, percent: 0 },
-      { stage: 'qualified', count: 0, percent: 0 },
-      { stage: 'proposal', count: 0, percent: 0 },
-      { stage: 'negotiation', count: 0, percent: 0 },
-      { stage: 'closing', count: 0, percent: 0 },
-      { stage: 'won', count: 0, percent: 0 },
+      { stage: 'prospect', count: 0, value: 0, percent: 0 },
+      { stage: 'qualified', count: 0, value: 0, percent: 0 },
+      { stage: 'proposal', count: 0, value: 0, percent: 0 },
+      { stage: 'negotiation', count: 0, value: 0, percent: 0 },
+      { stage: 'closing', count: 0, value: 0, percent: 0 },
+      { stage: 'won', count: 0, value: 0, percent: 0 },
     ]);
   });
 

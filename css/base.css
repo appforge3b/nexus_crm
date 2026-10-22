@@ -12,6 +12,7 @@ body {
 
 html {
   color-scheme: dark;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -20,6 +21,9 @@ body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'cv11', 'ss01';
 }
 
 button,
@@ -32,11 +36,14 @@ textarea {
 
 button {
   cursor: pointer;
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  padding: 8px 12px;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+}
+
+button:disabled {
+  cursor: default;
 }
 
 input[type="checkbox"],
@@ -56,6 +63,71 @@ p {
   margin: 0;
 }
 
+h1 {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+h2 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+::selection {
+  background: rgba(99, 102, 241, 0.4);
+}
+
+:focus-visible {
+  outline: 2px solid #818cf8;
+  outline-offset: 2px;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 99px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font: 600 11px 'Inter', -apple-system, sans-serif;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom-width: 2px;
+}
+
 #app {
   min-height: 100vh;
 }
@@ -68,3 +140,19 @@ p {
   height: 100%;
   pointer-events: none;
 }
+
+.ambient {
+  position: fixed;
+  inset: -10%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 600px at 12% 0%, rgba(99, 102, 241, 0.13), transparent 60%),
+    radial-gradient(800px 640px at 100% 25%, rgba(139, 92, 246, 0.1), transparent 60%),
+    radial-gradient(760px 520px at 45% 110%, rgba(16, 185, 129, 0.06), transparent 60%);
+}
+
+.muted { color: var(--text-muted); }
+.secondary { color: var(--text-secondary); }
+.small { font-size: 12px; }
+.pad { padding: 12px; }

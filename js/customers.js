@@ -17,6 +17,18 @@ export function openDealsForContact(deals, contactId) {
   return (deals ?? []).filter((deal) => deal.contactId === contactId && ACTIVE_STAGES.includes(deal.stage));
 }
 
+/**
+ * Customers are valued by their booked orders (the converting deal becomes the first order);
+ * everyone else by the deals they have won.
+ */
+export function contactLifetime(contact, { deals = [], orders = [], customers = [] } = {}) {
+  const customer = customers.find((item) => item.contactId === contact.id);
+  if (customer) return customerStats(orders.filter((order) => order.customerId === customer.id)).revenue;
+  return deals
+    .filter((deal) => deal.contactId === contact.id && deal.stage === 'won')
+    .reduce((sum, deal) => sum + Number(deal.value || 0), 0);
+}
+
 export function lifetimeValue(deals, orders, contactId, customerId) {
   const won = (deals ?? [])
     .filter((deal) => deal.contactId === contactId && deal.stage === 'won')

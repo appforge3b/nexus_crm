@@ -4,6 +4,13 @@
   "type": "module",
   "description": "NEXUS sales cockpit. The shipped app is vanilla HTML/CSS/JS with no runtime dependencies. Vitest is a dev-only test runner.",
   "scripts": {
+    "start": "python3 -m http.server 8765",
+    "serve": "python3 -m http.server 8765",
+    "build": "rm -rf dist && mkdir -p dist && cp index.html dist/ && cp -r css dist/ && cp -r js dist/ && echo '/* /index.html 200' > dist/_redirects",
+    "deploy": "npm run build && npx wrangler pages deploy dist --project-name nexus-crm --branch main --commit-dirty=true",
+    "deploy:scrm": "npm run build && npx wrangler pages deploy dist --project-name nexus-scrm --branch main --commit-dirty=true",
+    "deploy:all": "npm run deploy && npm run deploy:scrm",
+    "deploy:prod": "infisical run --env=prod -- npm run deploy",
     "test": "vitest run",
     "test:watch": "vitest"
   },
