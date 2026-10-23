@@ -1,25 +1,31 @@
 import { seedDemoData } from './seed.js';
 import { defaultSettings } from './settings.js';
 import { validateImport } from './validation.js';
+import { CURRENT_VERSION, migrate, needsMigration } from './migrate.js';
 
 export const STORAGE_KEY = 'nexus_data';
-export const COLLECTIONS = ['contacts', 'deals', 'activities', 'customers', 'orders', 'tags'];
+export const COLLECTIONS = ['contacts', 'companies', 'deals', 'activities', 'customers', 'orders', 'tags'];
 
 function emptyState() {
   return {
     contacts: [],
+    companies: [],
     deals: [],
     activities: [],
     customers: [],
     orders: [],
     tags: [],
     settings: defaultSettings(),
-    version: 1,
+    version: CURRENT_VERSION,
   };
 }
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+export function backupKey(storageKey, label) {
+  return `${storageKey}:backup:${label}`;
 }
 
 export class Store {
@@ -32,17 +38,34 @@ export class Store {
     this.#persist();
   }
 
+  #fresh(seed) {
+    return seed ? seedDemoData(this.clock.now()) : emptyState();
+  }
+
+  /** Keeps the first copy of a document under a label; never overwrites an earlier backup. */
+  #backup(raw, label) {
+    const key = backupKey(this.storageKey, label);
+    try {
+      if (this.storage.getItem(key) == null) this.storage.setItem(key, raw);
+    } catch { /* storage full: the live document is still written below */ }
+  }
+
   #load(seed) {
     const raw = this.storage.getItem(this.storageKey);
-    if (raw == null) return seed ? seedDemoData(this.clock.now()) : emptyState();
+    if (raw == null) return this.#fresh(seed);
+    let parsed = null;
     try {
-      const parsed = JSON.parse(raw);
-      const result = validateImport(parsed);
-      if (!result.ok) throw new Error('invalid');
-      return parsed;
-    } catch {
-      return seed ? seedDemoData(this.clock.now()) : emptyState();
+      parsed = JSON.parse(raw);
+    } catch { /* handled below */ }
+    if (!parsed || !validateImport(parsed).ok) {
+      this.#backup(raw, 'unreadable');
+      return this.#fresh(seed);
     }
+    if (needsMigration(parsed)) {
+      this.#backup(raw, `v${parsed.version}`);
+      return migrate(parsed, { now: this.clock.now() });
+    }
+    return parsed;
   }
 
   #persist() {
@@ -127,7 +150,7 @@ export class Store {
       throw new Error('invalid JSON');
     }
     if (!validateImport(parsed).ok) throw new Error('invalid import');
-    this.state = parsed;
+    this.state = needsMigration(parsed) ? migrate(parsed, { now: this.clock.now() }) : parsed;
     this.#persist();
     this.#notify({ type: 'import', collection: null, id: null });
   }

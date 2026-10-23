@@ -46,11 +46,22 @@ Maintain relationships after deals close:
 
 ### 3. Action-Driven Sales Execution (The Chronicle)
 Log every customer interaction in seconds without leaving the keyboard:
-- Calls, meetings, emails, status changes, and tactical notes.
+- Calls, meetings, emails, WhatsApp messages, status changes, and tactical notes.
 - Quick-log shortcut actions with timestamped chronological timeline views.
-- Deep bi-directional linking between contacts, deals, and activity logs.
+- Deep bi-directional linking between contacts, companies, deals, and activity logs.
+- **Next steps:** plan the next move ("Present GTM deck", "Follow up") against a date. The Chronicle opens on **Today**; scroll up for what's coming, scroll down for the past.
 
-### 4. Revenue Forecasting & Pipeline Analytics (The Radar)
+### 4. Multi-Stakeholder Selling
+Enterprise deals involve several people, so NEXUS models them explicitly:
+- **Companies** are first-class records with their own panel, people, deals, and history.
+- Every deal carries a list of **stakeholders** with roles (Decision maker, Champion, Influencer, Finance, Technical, User, Blocker) and one primary contact.
+
+### 5. Reach Customers in One Tap
+- **Compose** a message from any contact, deal, company, customer, or next step, then **send it on WhatsApp** with the person preselected. The message is saved to the Chronicle automatically.
+- **Call** opens a choice of phone dialler or WhatsApp call. When you come back to NEXUS, it offers to log the call with the duration filled in.
+- **Voice notes** on mobile: tap the mic, speak, and the note is transcribed to text and stored with a timestamp against the right contact.
+
+### 6. Revenue Forecasting & Pipeline Analytics (The Radar)
 Executive-level visibility into pipeline health and conversion dynamics:
 - Interactive Canvas 2D visualizations: revenue trajectory, sales funnel drop-offs, stage velocity, and win/loss breakdowns.
 - Configurable date range filters (`This Month`, `This Quarter`, `Year to Date`, or custom ranges).
@@ -61,13 +72,15 @@ Executive-level visibility into pipeline health and conversion dynamics:
 
 | Module | Route | Description |
 |---|---|---|
-| **The Briefing** | `#briefing` | Daily mission dashboard: active pipeline value, monthly win rate, priority alert cards, and live activity streams. |
-| **The Pipeline** | `#pipeline` | Visual sales Kanban board with stage filtering, value thresholds, priority chips, and quick deal creation drawers. |
-| **The Roster** | `#roster` | Contact directory with status filters, custom tags, relationship health scores, and direct activity triggers. |
-| **The Chronicle**| `#chronicle`| Full chronological timeline of sales interactions with infinite scrolling and type-based filtering. |
+| **The Briefing** | `#briefing` | Daily mission dashboard: active pipeline value, monthly win rate, priority alert cards, the **Up Next** agenda of planned steps, and live activity streams. |
+| **The Pipeline** | `#pipeline` | Visual sales Kanban board with stage filtering, value thresholds, priority chips, stakeholder avatars, next-step chips, and quick deal creation drawers. |
+| **The Roster** | `#roster` | **People** and **Companies** directories with status filters, custom tags, relationship health scores, and one-tap Message and Call actions. |
+| **The Chronicle**| `#chronicle`| Two-way timeline anchored on Today: planned steps above, history below, with infinite scrolling, type and status filters, Mark done, and one-click rescheduling. |
 | **The Radar** | `#radar` | Custom-rendered Canvas analytical charts: revenue trajectory, conversion funnels, stage velocity, and win-rate analysis. |
-| **Customer HQ** | `#customers`| Post-sale account hub showing customer status, order logs, total lifetime value, and order placement. |
-| **Settings** | `#settings` | Customization for user profile, currency (`₹`, `$`, `€`, `£`), pipeline stages, tags, data backup/restore, and reset utilities. |
+| **Customer HQ** | `#customers`| Post-sale account hub showing the company's people, customer status, order logs, total lifetime value, and order placement. |
+| **Settings** | `#settings` | Customization for user profile, currency (`₹`, `$`, `€`, `£`), pipeline stages, tags, messaging (country code and message templates), voice note language, data backup/restore, and reset utilities. |
+
+Global actions available everywhere: **Compose** (WhatsApp, Email, or Copy), **Call** (phone or WhatsApp), **Plan next step**, and **Voice note** (`V`, or the floating mic button on phones).
 
 ---
 
@@ -77,7 +90,8 @@ Executive-level visibility into pipeline health and conversion dynamics:
 - **Frontend Core:** HTML5 + Vanilla CSS3 + Modern ES6+ JavaScript modules.
 - **Styling:** Bespoke design system in `css/` using CSS Custom Properties (Design Tokens), glassmorphism (`backdrop-filter`), CSS Grid/Flexbox layouts, and hardware-accelerated animations.
 - **Charts:** Native HTML5 `<canvas>` rendering (`js/charts.js`, `js/chart-render.js`) — zero third-party chart libraries.
-- **Testing:** [Vitest](https://vitest.dev/) with `jsdom` (dev-only dependency) running 133 automated unit, integration, and contract tests.
+- **Testing:** [Vitest](https://vitest.dev/) with `jsdom` (dev-only dependency) running 182 automated unit, integration, and contract tests.
+- **Voice:** The browser's built-in Web Speech API (`SpeechRecognition`). There is no extra service or API key. Where it isn't available (for example Firefox), the voice sheet becomes a typed quick note, so you can still use the phone keyboard's dictation key.
 - **Hosting & CDN:** [Cloudflare Pages](https://pages.cloudflare.com/) delivering global edge static distribution, HTTP/3, and automatic TLS.
 - **Configuration & Secrets:** [Infisical](https://infisical.com/) centralized secret and variable management.
 
@@ -88,13 +102,16 @@ nexus_crm/
 │   ├── animations.css       # Keyframes, micro-interactions, particles
 │   ├── base.css             # Typography, resets, global layouts
 │   ├── components.css       # Buttons, cards, modals, drawers, toasts
+│   ├── features.css         # Companies, stakeholders, next steps, composer, call & voice sheets
 │   ├── responsive.css       # Breakpoints for tablet and mobile
 │   └── tokens.css           # Color palette, spacing, elevations, glass tokens
 ├── docs/                    # Architecture diagrams, specifications, mockups
 ├── js/
+│   ├── agenda.js            # Planned vs done steps, due labels, next step per deal
 │   ├── app.js               # Application orchestration & event listeners
 │   ├── chart-render.js      # Canvas chart drawing routines
 │   ├── charts.js            # Chart data transformers
+│   ├── companies.js         # Company records, people at a company, deal stakeholders
 │   ├── customers.js         # Customer calculations & order schemas
 │   ├── deals.js             # Pipeline stages, probabilities, conversions
 │   ├── format.js            # Currency & date formatters
@@ -103,10 +120,15 @@ nexus_crm/
 │   ├── keyboard.js          # Global keyboard shortcuts
 │   ├── main.js              # Entry point & dynamic instance configuration
 │   ├── markup.js            # HTML sanitization & markup helpers
+│   ├── messaging.js         # Phone normalisation, wa.me / tel: / mailto: links, templates
+│   ├── migrate.js           # Schema migrations (v1 ➔ v2: companies & stakeholders)
 │   ├── router.js            # Hash-based client-side router
 │   ├── seed.js              # Comprehensive demo dataset generator
+│   ├── sheets.js            # Plan, complete, message, call, and voice sheets
 │   ├── store.js             # Reactive localStorage store with validation
+│   ├── view-helpers.js      # Shared markup fragments (pickers, avatars, dates)
 │   ├── views.js             # Component renderers for all views
+│   ├── voice.js             # Speech recognition wrapper, transcript helpers
 │   └── validation.js        # Data integrity checks
 ├── tests/
 │   ├── contract/            # Design system and constraint tests
@@ -122,8 +144,9 @@ nexus_crm/
 ## 💾 Data Storage & Isolation
 
 The application employs an isolated, reactive client-side store backed by browser `localStorage`:
-- **Collections:** `contacts`, `deals`, `activities`, `customers`, `orders`, `tags`, and `settings`.
+- **Collections:** `companies`, `contacts`, `deals`, `activities`, `customers`, `orders`, `tags`, and `settings`.
 - **Validation:** Every read/import validates schema integrity against `js/validation.js`.
+- **Migrations:** Older data is upgraded automatically when it's loaded or imported. The version 1 to version 2 upgrade builds company records from contacts' company names, turns each deal's contact into its primary stakeholder, and marks existing activities as done. Before stored data is migrated, the untouched original is kept under `<storageKey>:backup:v1`. That copy is never overwritten, so nothing is lost if you need to roll back.
 - **Portability:** Built-in JSON export and import in the **Settings** view allows complete data portability with zero lock-in.
 
 ### Dual-Instance Storage Partitioning

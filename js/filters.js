@@ -1,4 +1,5 @@
 import { calendarKey } from './format.js';
+import { companyOf, customerCompanyId, peopleAt } from './companies.js';
 
 function includes(query, ...fields) {
   const needle = String(query ?? '').trim().toLowerCase();
@@ -13,11 +14,13 @@ function within(iso, from, to) {
   return true;
 }
 
-export function filterDeals(deals, contacts, criteria = {}) {
+export function filterDeals(deals, contacts, criteria = {}, companies = []) {
   const byId = new Map(contacts.map((contact) => [contact.id, contact]));
   return deals.filter((deal) => {
     const contact = byId.get(deal.contactId);
-    if (!includes(criteria.search, deal.title, contact?.company, contact?.name)) return false;
+    const people = (deal.stakeholders || []).map((item) => byId.get(item.contactId)?.name);
+    const company = companyOf(contact, companies)?.name;
+    if (!includes(criteria.search, deal.title, contact?.company, contact?.name, company, ...people)) return false;
     if (criteria.minValue != null && criteria.minValue !== '' && Number(deal.value) < Number(criteria.minValue)) return false;
     if (criteria.maxValue != null && criteria.maxValue !== '' && Number(deal.value) > Number(criteria.maxValue)) return false;
     if (criteria.priorities?.length && !criteria.priorities.includes(deal.priority)) return false;
@@ -33,6 +36,15 @@ export function filterContacts(contacts, { query = '', status = 'all' } = {}) {
   });
 }
 
+export function filterCompanies(companies, contacts, query) {
+  return (companies ?? []).filter((company) => includes(
+    query,
+    company.name,
+    company.industry,
+    ...peopleAt(company, contacts, companies).map((person) => person.name),
+  ));
+}
+
 export function filterActivities(activities, criteria = {}) {
   return activities.filter((activity) => {
     if (criteria.type && criteria.type !== 'all' && activity.type !== criteria.type) return false;
@@ -42,10 +54,12 @@ export function filterActivities(activities, criteria = {}) {
   });
 }
 
-export function filterCustomers(customers, contacts, query) {
+export function filterCustomers(customers, contacts, query, companies = []) {
   const byId = new Map(contacts.map((contact) => [contact.id, contact]));
   return customers.filter((customer) => {
     const contact = byId.get(customer.contactId);
-    return includes(query, contact?.name, contact?.company);
+    const company = companies.find((item) => item.id === customerCompanyId(customer, contacts, companies));
+    const people = company ? peopleAt(company, contacts, companies).map((person) => person.name) : [];
+    return includes(query, contact?.name, contact?.company, company?.name, ...people);
   });
 }

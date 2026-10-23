@@ -33,6 +33,19 @@ const PATHS = {
   bolt: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
   warning: '<path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
   filter: '<path d="M4 5h16M7 12h10M10 19h4"/>',
+  whatsapp: '<path d="M3.5 20.5l1.3-4.2A8.5 8.5 0 1 1 8 19.3z"/><path d="M9 8.6c.2-.4.5-.5.8-.5h.5c.2 0 .4.1.5.4l.7 1.7c.1.2 0 .5-.1.6l-.5.6c.6 1.2 1.6 2.2 2.8 2.8l.6-.5c.2-.1.4-.2.6-.1l1.7.7c.3.1.4.3.4.5v.5c0 .3-.1.6-.5.8-.6.4-1.4.5-2.1.3a8.3 8.3 0 0 1-5.4-5.4c-.2-.7-.1-1.5.3-2.1z"/>',
+  task: '<rect x="3.5" y="3.5" width="17" height="17" rx="3"/><path d="M8 12.5l2.7 2.7L16.5 9"/>',
+  mic: '<rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3.5M8.5 21.5h7"/>',
+  message: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-5.1A8 8 0 1 1 21 12z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/>',
+  copy: '<rect x="8.5" y="8.5" width="12" height="12" rx="2"/><path d="M15.5 8.5V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  pause: '<rect x="6.5" y="5" width="3.5" height="14" rx="1"/><rect x="14" y="5" width="3.5" height="14" rx="1"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2.5"/>',
+  send: '<path d="M21.5 2.5L10.5 13.5"/><path d="M21.5 2.5l-7 19-4-8-8-4z"/>',
+  flag: '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
+  'user-plus': '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M19 8v6M16 11h6"/>',
+  'arrow-up': '<path d="M12 19V5"/><path d="M6 11l6-6 6 6"/>',
+  'arrow-down': '<path d="M12 5v14"/><path d="M6 13l6 6 6-6"/>',
 };
 
 export function icon(name, size = 18) {
@@ -40,4 +53,4 @@ export function icon(name, size = 18) {
   return `<svg class="icon" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 }
 
-export const ACTIVITY_ICON = { call: 'call', email: 'email', meeting: 'meeting', note: 'note' };
+export const ACTIVITY_ICON = { call: 'call', email: 'email', meeting: 'meeting', note: 'note', whatsapp: 'whatsapp', task: 'task' };

@@ -14,6 +14,8 @@ export function defaultSettings() {
   return {
     userName: 'there',
     currency: '₹',
+    countryCode: '+91',
+    voiceLang: 'en-IN',
     stages: STAGES.map((id) => ({ id, name: STAGE_LABELS[id] })),
   };
 }

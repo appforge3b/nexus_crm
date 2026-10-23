@@ -12,5 +12,6 @@ export function shortcutAction(event) {
   if (event.key === 'n' || event.key === 'N') return { type: 'create' };
   if (event.key === '/') return { type: 'search' };
   if (event.key === '?') return { type: 'help' };
+  if (event.key === 'v' || event.key === 'V') return { type: 'voice' };
   return null;
 }

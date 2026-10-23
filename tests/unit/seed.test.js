@@ -13,15 +13,15 @@ describe('demo seed', () => {
       'Enterprise', 'SMB', 'Tech', 'Finance', 'Decision Maker', 'Influencer', 'Champion', 'Hot Lead',
     ]);
     expect(data.contacts.length).toBeGreaterThanOrEqual(6);
-    expect(data.contacts.length).toBeLessThanOrEqual(8);
+    expect(data.contacts.length).toBeLessThanOrEqual(12);
     expect(data.deals.length).toBeGreaterThanOrEqual(10);
     expect(data.deals.length).toBeLessThanOrEqual(15);
     expect(data.activities.length).toBeGreaterThanOrEqual(15);
-    expect(data.activities.length).toBeLessThanOrEqual(20);
+    expect(data.activities.length).toBeLessThanOrEqual(32);
     expect(data.customers.length).toBeGreaterThanOrEqual(2);
     expect(data.customers.length).toBeLessThanOrEqual(3);
     expect(data.tags.map((tag) => tag.name)).toEqual(DEFAULT_TAG_NAMES);
-    expect(data.version).toBe(1);
+    expect(data.version).toBe(2);
     expect(data.settings.currency).toBe('₹');
   });
 
@@ -35,7 +35,7 @@ describe('demo seed', () => {
       'prospect', 'qualified', 'proposal', 'negotiation', 'closing', 'won', 'lost',
     ]));
     expect(new Set(data.activities.map((activity) => activity.type))).toEqual(new Set([
-      'call', 'email', 'meeting', 'note',
+      'call', 'email', 'meeting', 'note', 'whatsapp', 'task',
     ]));
 
     for (const deal of data.deals) {
@@ -62,14 +62,33 @@ describe('demo seed', () => {
       expect(contact.tags.every((id) => tagIds.has(id))).toBe(true);
     }
     for (const tag of data.tags) expect(tag.color).toMatch(/^#[0-9a-fA-F]{6}$/);
+    for (const deal of data.deals) {
+      expect(deal.stakeholders[0].contactId).toBe(deal.contactId);
+      expect(deal.stakeholders.every((entry) => contactIds.has(entry.contactId))).toBe(true);
+    }
 
     const ids = [
-      ...data.contacts, ...data.deals, ...data.activities, ...data.customers, ...data.orders, ...data.tags,
+      ...data.contacts, ...data.companies, ...data.deals, ...data.activities, ...data.customers, ...data.orders, ...data.tags,
     ].map((entity) => entity.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const entity of [...data.contacts, ...data.deals, ...data.activities, ...data.customers, ...data.orders, ...data.tags]) {
       expect(entity.createdAt).toMatch(ISO);
       expect(entity.updatedAt).toMatch(ISO);
     }
+  });
+
+  it('shows the new workflows: companies with several people, planned steps, WhatsApp and a voice note', () => {
+    const helios = data.companies.find((company) => company.name === 'Helios Bank');
+    expect(data.contacts.filter((contact) => contact.companyId === helios.id)).toHaveLength(3);
+    const banking = data.deals.find((deal) => deal.title === 'Core banking integration');
+    expect(banking.stakeholders.map((entry) => entry.role)).toEqual(['Champion', 'Decision maker', 'Technical']);
+
+    const now = at(2026, 10, 21, 9);
+    const planned = data.activities.filter((activity) => activity.status === 'planned');
+    expect(planned.length).toBeGreaterThanOrEqual(4);
+    expect(planned.some((activity) => new Date(activity.date) < now)).toBe(true);
+    expect(planned.some((activity) => new Date(activity.date) > now)).toBe(true);
+    expect(data.activities.some((activity) => activity.source === 'voice' && activity.durationSec > 0)).toBe(true);
+    expect(data.activities.filter((activity) => activity.status !== 'planned').every((activity) => new Date(activity.date) <= now)).toBe(true);
   });
 });

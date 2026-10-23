@@ -12,16 +12,16 @@ function setup(storageData) {
 }
 
 describe('Store persistence contract', () => {
-  it('uses the single localStorage key and the seven top-level collections', () => {
+  it('uses the single localStorage key and the top-level collections', () => {
     expect(STORAGE_KEY).toBe('nexus_data');
-    expect(COLLECTIONS).toEqual(['contacts', 'deals', 'activities', 'customers', 'orders', 'tags']);
+    expect(COLLECTIONS).toEqual(['contacts', 'companies', 'deals', 'activities', 'customers', 'orders', 'tags']);
   });
 
-  it('starts from empty collections, version 1, and default settings when nothing is stored', () => {
+  it('starts from empty collections, version 2, and default settings when nothing is stored', () => {
     const { store, storage } = setup();
     for (const name of COLLECTIONS) expect(store.getAll(name)).toEqual([]);
     const raw = JSON.parse(storage.getItem(STORAGE_KEY));
-    expect(raw.version).toBe(1);
+    expect(raw.version).toBe(2);
     expect(raw.settings.userName).toBe('there');
     expect(raw.settings.currency).toBe('₹');
     expect(raw.settings.stages.map((stage) => stage.id)).toEqual([
@@ -104,7 +104,7 @@ describe('Store persistence contract', () => {
     const contact = store.create('contacts', { name: 'Priya', status: 'active' });
     const json = store.exportAll();
     const parsed = JSON.parse(json);
-    expect(parsed.version).toBe(1);
+    expect(parsed.version).toBe(2);
     expect(parsed.contacts).toHaveLength(1);
 
     store.create('contacts', { name: 'Other', status: 'prospect' });

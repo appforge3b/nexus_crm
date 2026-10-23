@@ -91,6 +91,20 @@ Tags categorize both contacts and deals across industries, sizes, and priorities
 - Pick an accent color from the color swatches.
 - Click **Add tag**.
 
+### Step 2.5: Messaging & Voice
+- **Default country code:** set the code to add to numbers saved without one (for example `91` for India). A number like `98450 12873` then opens WhatsApp as `+91 98450 12873`.
+- **Message templates:** edit the ready-made messages (Follow-up, Thanks for your time, Meeting confirmation, Proposal sent, Check-in), add your own, or reset to the defaults. Templates can use these placeholders, which are filled in when you compose:
+
+| Placeholder | Becomes |
+|---|---|
+| `{firstName}` | The recipient's first name |
+| `{company}` | Their company |
+| `{deal}` | The deal you're writing about |
+| `{nextStep}` / `{nextStepDate}` | The deal's next planned step and when it is |
+| `{myName}` | Your name from the profile |
+
+- **Voice note language:** choose the language used to transcribe voice notes (for example English (India)).
+
 ---
 
 ## 🚀 3. Daily Sales Playbook: View-by-View Walkthrough
@@ -115,8 +129,11 @@ Your day begins at **The Briefing**. Inspired by morning military and financial 
      - 🟡 **Attention:** Contacts with no touchpoints in 5+ days.
      - ⚡ **High Value:** Top 20% highest revenue opportunities.
      - ⚠️ **At Risk:** Deals stalled in the same stage for 14+ days.
-4. **Revenue Forecast Chart:** High-definition Canvas area visualization plotting projected revenue alongside weighted confidence intervals.
-5. **Live Activity Stream:** Chronological ticker of the latest emails, calls, and status updates across the company.
+     - 🚩 **Overdue step / No next step:** Deals whose planned step has slipped past its date, or that have nothing planned at all.
+   - Each priority has **Message** and **Call** buttons so you can act on it right away.
+4. **Up Next:** Your planned steps grouped as Overdue, Later today, and Next 7 days. Tick one off with **Mark done** or open the full agenda in the Chronicle.
+5. **Revenue Forecast Chart:** High-definition Canvas area visualization plotting projected revenue alongside weighted confidence intervals.
+6. **Live Activity Stream:** Chronological ticker of the latest emails, calls, and status updates across the company.
 
 ---
 
@@ -132,7 +149,18 @@ Your day begins at **The Briefing**. Inspired by morning military and financial 
 - **Accidental Move Safeguards:** Moving a deal backwards prompts a confirmation dialogue to prevent accidental status changes.
 - **Marking Deals as Won:** Moving a deal to `Won` triggers an animated celebratory confetti particle burst and prompts to automatically add the account to **Customer HQ**.
 - **Capturing Lost Reasons:** Moving a deal to `Lost` prompts for a structured loss category (`Price`, `Competitor`, `Timeline`, `Feature Gap`, or `Ghosted`), feeding into your win/loss analytics.
-- **Filtering:** Use the top filter bar to instantly filter by title, minimum/maximum value thresholds, or priority pills.
+- **Filtering:** Use the top filter bar to instantly filter by title, company, any stakeholder's name, minimum/maximum value thresholds, or priority pills.
+- **Next step on every card:** Each card shows the deal's next planned step and when it's due, or a **Plan next step** prompt when nothing is planned. Overdue steps turn amber.
+
+#### Working with Several People on a Deal
+Most deals involve more than one person. Open a deal to see its **People** panel:
+
+![Deal stakeholders](./screenshots/deal-drawer-people.png)
+
+- **Add a stakeholder:** pick someone from the list, optionally choose a role (Decision maker, Champion, Influencer, Finance, Technical, User, Blocker), and click **Add**. People from the deal's company are listed first.
+- **Primary contact:** the person marked **Primary** is the default for messages and calls. Click the star on anyone else to make them primary.
+- **Remove:** the cross removes a stakeholder from the deal (their contact record stays). An **Undo** button appears in the confirmation toast.
+- Each person has their own **Call** and **WhatsApp** buttons, and the card shows their faces as an avatar stack.
 
 #### Clean Business Instance (First Run):
 On `scrm.snilld.in`, your pipeline starts clean and ready for your first entry:
@@ -153,7 +181,17 @@ On `scrm.snilld.in`, your pipeline starts clean and ready for your first entry:
   - Number of interactions in the last 30 days.
   - Value of associated deals won.
 - **Status Filtering:** Quickly toggle between `All`, `Prospects`, `Customers`, and `Inactive`.
-- **Contact Card Actions:** Click any contact card to open their contact dossier, review associated deals, view their activity history, or log a call directly.
+- **Contact Card Actions:** Click any contact card to open their contact dossier, review associated deals, view their activity history, or message, call, and plan a next step directly.
+
+#### Companies
+Switch the Roster from **People** to **Companies** to see each organisation as one record:
+
+![Companies directory](./screenshots/companies.png)
+
+- Each company card shows its people, open pipeline value, and last touch.
+- Open a company to see everyone who works there, its deals, its next steps, and the full shared history.
+- **Adding people:** when you type a company name in a contact form, NEXUS suggests existing companies so colleagues are grouped together. A new name creates the company for you.
+- **Renaming** a company updates every person who works there. **Deleting** a company keeps the people, deals, and history; they are simply no longer grouped under it.
 
 ---
 
@@ -173,10 +211,33 @@ At the top of The Chronicle sits the **Quick-Log Action Bar**:
 #### Interactive Timeline:
 - Visual color-coded left borders identify interaction types at a glance:
   - 🔵 Blue = Phone Calls
-  - 🟢 Green = Emails
+  - 🟢 Green = Emails and WhatsApp messages
   - 🟣 Purple = Meetings
   - ⚪ Slate = Notes & System Status Changes
 - Click any contact badge or deal tag inside a timeline card to immediately jump to that entity.
+
+#### Planning Next Steps: Today, What's Coming, and What's Done
+The Chronicle is also your agenda. It always opens on **Today**:
+
+![Upcoming steps above Today](./screenshots/chronicle-upcoming.png)
+
+- **Scroll up** for what's coming: planned steps from the furthest date at the top down to the next one just above Today. Overdue steps sit right under the Today marker so they can't be missed.
+- **Scroll down** for the past, newest first, just as before.
+- A **Today** button appears whenever you've scrolled away, pointing in the direction of Today.
+- Use the **All / Upcoming / Done** filter to see only your agenda or only your history.
+
+**To plan a step**, click **Plan next step** here, on a deal card, a contact, a company, or Customer HQ:
+
+![Plan a next step](./screenshots/plan.png)
+
+1. Give it a title, or tap a suggestion such as *Present GTM deck* or *Follow up*.
+2. Choose the type (meeting, call, WhatsApp, email, task) and when: *Later today*, *Tomorrow*, *In 3 days*, *Next week*, or a specific date and time.
+3. Pick the person and the deal it relates to, add any notes, and save.
+
+**When a step is due**, its card offers:
+- **Mark done:** record the outcome and duration. *Plan the next step* is ticked by default, so the next move gets scheduled straight away and the deal never goes quiet.
+- **+1 day / +1 week:** reschedule in one click (with **Undo**). Overdue steps move relative to today, keeping their time.
+- **Edit** or **Delete** for anything else.
 
 ---
 
@@ -207,8 +268,48 @@ Once a deal is marked **Won**, the account transitions to **Customer HQ** for po
 - **Financial Statistics:** Real-time summary cards for Total Revenue, Total Orders, Average Order Value (AOV), and Last Purchase Date.
 - **Order Management:** Click **+ New Order** to record new invoices, renewals, or expansion purchases.
 - **Account Notes & Upsell Deals:** Maintain renewal opportunities directly linked to the customer account.
+- **People:** Every person at the customer's company is shown, with message, call, and next-step actions for the whole account.
 
 ---
+
+### Reaching Customers: Message, Call, and Voice Notes
+
+These three actions are available across the app: on contacts, companies, deals, Customer HQ, Briefing priorities, and Chronicle steps.
+
+#### Send a WhatsApp Message
+![Message composer](./screenshots/composer.png)
+
+1. Click **Message**. The relevant person is already chosen. On a deal with several stakeholders, tap a different person at the top to switch.
+2. Tap a template to fill in the message, or write your own. The preview shows how it will look as a WhatsApp bubble.
+3. Click **Send on WhatsApp**. WhatsApp opens (the app on a phone, WhatsApp Web on a computer) with that person's chat and your message ready. Tap send there.
+4. A copy is saved to the Chronicle as a WhatsApp entry against the person and deal. If you didn't send it after all, use **Undo** in the toast.
+
+**Email** opens your mail app with the same text, and **Copy** copies it for any other channel. If the person has no phone number, NEXUS tells you and offers Email or Copy instead.
+
+#### Call Someone
+![Call options](./screenshots/call-options.png)
+
+Click **Call** and choose how:
+- **Phone call** rings them from your phone's dialler.
+- **WhatsApp call** opens their WhatsApp chat; tap the call icon there to ring.
+- **Copy number** or **Log a call you already made** are there too.
+
+On a deal with several people, NEXUS first asks who to call. When you return to NEXUS after the call, it asks **How did the call go?** with the person, channel, and duration already filled in. Just add the outcome and save.
+
+#### Voice Notes on the Go
+Between meetings, in the car or at a café, speak your notes instead of typing them:
+
+| Recording | Review & save |
+|---|---|
+| ![Recording a voice note](./screenshots/m-voice-recording.png) | ![Reviewing a voice note](./screenshots/m-voice-review.png) |
+
+1. On a phone, tap the purple **mic button** at the bottom right. On a computer, press `V`.
+2. Allow microphone access the first time. Speak naturally; your words appear as you talk. **Pause** if you're interrupted, then **Done** when finished.
+3. Review the text and fix anything the transcription misheard. Pick who it's about (recent contacts are one tap away), link a deal, and optionally tick **Also plan a next step**.
+4. **Save note.** It's stored in the Chronicle as a voice note with the time you recorded it.
+
+> [!NOTE]
+> Transcription uses your browser's built-in speech recognition (Chrome, Edge, and Safari, including on phones), so audio may be processed by your browser provider, but nothing is sent to NEXUS. In browsers without it, the sheet becomes a **Quick note**: tap the microphone on your phone's keyboard to dictate instead.
 
 ## ⌨️ 4. Keyboard Shortcuts & Power-User Controls
 
@@ -222,6 +323,9 @@ NEXUS is designed to be operated with minimal mouse movement. Keep your hands on
 | `4` | Jump to **Chronicle** | Opens the activity timeline |
 | `5` | Jump to **Radar** | Opens sales analytics |
 | `6` | Jump to **Customer HQ** | Opens customer accounts & orders |
+| `N` | **New** | Creates a new record for the current view |
+| `/` | **Search** | Focuses the current view's search box |
+| `V` | **Voice note** | Starts recording a voice note |
 | `?` | **Help / Shortcuts** | Displays on-screen shortcut reference overlay |
 | `Escape` | **Dismiss** | Closes any open modal, deal drawer, or popup |
 
@@ -245,7 +349,15 @@ Because NEXUS operates on private client-side browser storage without transmitti
 4. Review the preview summary (e.g. `12 contacts, 8 deals, 24 activities`).
 5. Confirm the import. The complete CRM state restores immediately.
 
-### 5.3 Resetting Demo Data vs. Clearing All Data
+### 5.3 Automatic Upgrades
+When NEXUS adds new capabilities (such as companies and multiple stakeholders per deal), your existing data is upgraded automatically the next time you open the app:
+- Contacts with the same company name are grouped into one company record.
+- Each deal's contact becomes its primary stakeholder.
+- Older backup files are upgraded the same way when imported.
+
+Before upgrading, NEXUS keeps an untouched copy of your previous data in the browser, so nothing is ever lost.
+
+### 5.4 Resetting Demo Data vs. Clearing All Data
 - **Reset Demo Data (Available on Demo instance):** Replaces all records with realistic sample data.
 - **Clear All Data:** Requires two separate security confirmation prompts. Erases all records and returns the instance to a pristine empty state.
 

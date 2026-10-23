@@ -1,4 +1,5 @@
 import { STAGE_PROBABILITY, STAGES, LOST_REASONS } from './stages.js';
+import { customerCompanyId, dealCompanyId } from './companies.js';
 
 export { STAGE_PROBABILITY, STAGES, LOST_REASONS };
 
@@ -25,6 +26,15 @@ function localDate(now) {
   return `${now.getFullYear()}-${month}-${day}`;
 }
 
+/** Customers that already represent the deal's contact or the deal's company. */
+function existingCustomers(store, deal) {
+  const contacts = store.getAll('contacts');
+  const companies = store.getAll('companies');
+  const companyId = dealCompanyId(deal, contacts, companies);
+  return store.query('customers', (customer) => customer.contactId === deal.contactId
+    || (companyId && customerCompanyId(customer, contacts, companies) === companyId));
+}
+
 export function moveDeal(store, dealId, nextStage, options = {}) {
   const deal = store.getById('deals', dealId);
   if (!deal) return { ok: false };
@@ -46,7 +56,7 @@ export function moveDeal(store, dealId, nextStage, options = {}) {
     stageChangedAt: now.toISOString(),
     stageHistory: [...history, { stage: nextStage, at: now.toISOString() }],
   });
-  const existing = store.query('customers', (customer) => customer.contactId === deal.contactId);
+  const existing = existingCustomers(store, deal);
   const contact = store.getById('contacts', deal.contactId);
   const askConversion = nextStage === 'won' && existing.length === 0 && contact?.status !== 'customer';
   return { ok: true, celebrate: nextStage === 'won', askConversion };
@@ -56,10 +66,11 @@ export function confirmConversion(store, dealId, accept, { now } = {}) {
   if (!accept) return { customer: null };
   const deal = store.getById('deals', dealId);
   const moment = now ?? new Date();
-  let customer = store.query('customers', (item) => item.contactId === deal.contactId)[0] ?? null;
+  let customer = existingCustomers(store, deal)[0] ?? null;
   if (!customer) {
     customer = store.create('customers', {
       contactId: deal.contactId,
+      companyId: dealCompanyId(deal, store.getAll('contacts'), store.getAll('companies')),
       convertedDealId: deal.id,
       convertedAt: moment.toISOString(),
       satisfactionRating: null,

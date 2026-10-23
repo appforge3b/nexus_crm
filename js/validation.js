@@ -37,6 +37,22 @@ export function validateDeal(data, { contacts = [] } = {}) {
   return errors.length ? fail(errors) : ok(data);
 }
 
+function dealIncludes(deal, contact, contactId) {
+  if (deal.contactId === contactId) return true;
+  if ((deal.stakeholders || []).some((item) => item.contactId === contactId)) return true;
+  return Boolean(deal.companyId && contact?.companyId && deal.companyId === contact.companyId);
+}
+
+export function validateCompany(data, { companies = [] } = {}) {
+  const errors = [];
+  const name = String(data?.name ?? '').trim();
+  if (!name) errors.push({ field: 'name', message: 'Company name is required' });
+  else if (companies.some((company) => company.id !== data?.id && company.name.trim().toLowerCase() === name.toLowerCase())) {
+    errors.push({ field: 'name', message: 'A company with that name already exists' });
+  }
+  return errors.length ? fail(errors) : ok(data);
+}
+
 export function validateActivity(data, { contacts = [], deals = [] } = {}) {
   const errors = [];
   if (!String(data?.contactId ?? '').trim() || !contacts.some((contact) => contact.id === data.contactId)) {
@@ -46,7 +62,10 @@ export function validateActivity(data, { contacts = [], deals = [] } = {}) {
   if (!String(data?.date ?? '').trim()) errors.push({ field: 'date', message: 'Date is required' });
   if (data?.dealId) {
     const deal = deals.find((item) => item.id === data.dealId);
-    if (!deal || deal.contactId !== data.contactId) errors.push({ field: 'deal', message: 'Deal does not belong to this contact' });
+    const contact = contacts.find((item) => item.id === data.contactId);
+    if (!deal || !dealIncludes(deal, contact, data.contactId)) {
+      errors.push({ field: 'deal', message: 'Deal does not belong to this contact' });
+    }
   }
   if (data?.duration != null && data.duration !== '' && Number(data.duration) < 0) {
     errors.push({ field: 'duration', message: 'Duration must be zero or greater' });
@@ -89,5 +108,8 @@ export function validateImport(parsed) {
     errors.push({ field: 'settings', message: 'settings must be an object' });
   }
   if (typeof parsed.version !== 'number') errors.push({ field: 'version', message: 'version is required' });
+  else if (parsed.version >= 2 && !Array.isArray(parsed.companies)) {
+    errors.push({ field: 'companies', message: 'companies must be an array' });
+  }
   return errors.length ? fail(errors) : ok(parsed);
 }
