@@ -96,6 +96,37 @@ export function validateTag(data, { tags = [] } = {}) {
   return errors.length ? fail(errors) : ok(data);
 }
 
+/**
+ * Field-level checks for one synced record. Cross-record references (does the contact exist?)
+ * are the client's job, because records may arrive in any order.
+ */
+export function validateRecord(collection, data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.id !== 'string' || !data.id) {
+    return fail([{ field: 'id', message: 'Record is invalid' }]);
+  }
+  switch (collection) {
+    case 'contacts':
+      return validateContact(data, { tags: (Array.isArray(data.tags) ? data.tags : []).map((id) => ({ id })) });
+    case 'companies':
+      return validateCompany(data);
+    case 'deals':
+      return validateDeal(data, { contacts: [{ id: data.contactId }] });
+    case 'activities':
+      return validateActivity(data, {
+        contacts: [{ id: data.contactId }],
+        deals: data.dealId ? [{ id: data.dealId, contactId: data.contactId }] : [],
+      });
+    case 'orders':
+      return validateOrder(data);
+    case 'tags':
+      return validateTag(data);
+    case 'customers':
+      return ok(data);
+    default:
+      return fail([{ field: 'collection', message: 'Unknown collection' }]);
+  }
+}
+
 export function validateImport(parsed) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return fail([{ field: 'document', message: 'Import is invalid' }]);

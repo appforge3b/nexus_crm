@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'jsdom',
-    include: ['tests/**/*.test.js'],
+    include: ['tests/{unit,integration,contract}/**/*.test.js'],
     setupFiles: ['tests/helpers/polyfill.js'],
     restoreMocks: true,
     clearMocks: true,

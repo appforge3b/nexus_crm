@@ -45,6 +45,7 @@ import {
 import { templatesFrom } from './messaging.js';
 import { VOICE_LANGUAGES } from './voice.js';
 import { renderSheet } from './sheets.js';
+import { renderCloudDataPanel, renderCloudOverlay, renderWorkspacePanels } from './cloud-views.js';
 import {
   ACTIVITY_COLOR,
   ACTIVITY_LABEL,
@@ -56,6 +57,7 @@ import {
   activityLabel,
   avatar,
   avatarStack,
+  brandMark,
   companyAvatar,
   companyById,
   companyHint,
@@ -64,6 +66,8 @@ import {
   contactById,
   contactPicker,
   dealSelect,
+  excelBlock,
+  excelPreview,
   emptyState,
   field,
   localDateTime,
@@ -103,13 +107,6 @@ function lastActivityFor(activities, predicate) {
   return doneOnly(activities).filter(predicate).sort((a, b) => new Date(b.date) - new Date(a.date))[0] ?? null;
 }
 
-function brandMark() {
-  return `<svg class="brand-mark" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
-    <defs><linearGradient id="nx-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#a855f7"/></linearGradient></defs>
-    <path d="M6 26V6l20 20V6" fill="none" stroke="url(#nx-grad)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>`;
-}
-
 function phoneItem(contact, refs = {}) {
   if (!contact?.phone) return '';
   const dealRef = refs.dealId ? `data-deal-ref="${esc(refs.dealId)}"` : '';
@@ -137,6 +134,7 @@ export function renderShell() {
         <div class="brand">${brandMark()}<span class="wordmark">NEXUS</span></div>
         <div class="nav-group">${links}</div>
         <div class="sidebar-actions">
+          <div class="account-slot" data-account></div>
           <a href="#/settings" class="nav-link" title="Settings"><span class="nav-icon">${icon('settings')}</span><span class="nav-label">Settings</span></a>
           <button type="button" class="nav-link" data-action="show-help" title="Keyboard shortcuts"><span class="nav-icon">${icon('keyboard')}</span><span class="nav-label">Shortcuts</span><kbd class="nav-kbd">?</kbd></button>
           <button type="button" class="nav-link collapse-btn" aria-label="Collapse sidebar" title="Collapse sidebar"><span class="nav-icon">${icon('collapse')}</span><span class="nav-label">Collapse</span></button>
@@ -147,12 +145,14 @@ export function renderShell() {
         <div class="brand">${brandMark()}<span class="wordmark">NEXUS</span></div>
         <button type="button" class="icon-btn accent" data-action="new-context" aria-label="Create new">${icon('plus')}</button>
       </header>
+      <div class="sync-banner-slot" data-sync-banner hidden></div>
       <main class="workspace" id="main"></main>
       <nav data-bottom-nav class="bottom-nav" aria-label="Primary">
         ${NAV.map(([id, label, href]) => `<a href="${href}">${icon(id, 20)}<span>${label}</span></a>`).join('')}
       </nav>
       <button type="button" class="voice-fab" data-action="voice-note" aria-label="Record a voice note" title="Voice note (V)">${icon('mic', 22)}</button>
     </div>
+    <div class="account-menu-host" data-account-menu></div>
     <div class="scrim" data-action="close-menu"></div>
     <div class="overlay-host"></div>
     <div class="toasts" aria-live="polite"></div>
@@ -1255,13 +1255,15 @@ function renderCustomerDetail(customer, ctx, currency) {
 function renderSettings(ctx) {
   const { settings, tags, ui, contacts, deals, activities } = ctx;
   const templates = templatesFrom(settings);
+  const hasRecords = Boolean(contacts.length || ctx.companies.length || deals.length || activities.length || tags.length);
   return `
     <section data-view="settings" class="view">
       <header class="view-header stagger"><div><p class="eyebrow">Configuration</p><h1>Settings</h1></div></header>
       <div class="settings-grid">
+        ${ctx.cloud ? renderWorkspacePanels(ctx) : ''}
         <section class="panel glass stagger">
           <header class="panel-head"><h2>Profile</h2></header>
-          <label class="field"><span>Your name</span><input data-field="userName" value="${esc(settings.userName === 'there' ? '' : settings.userName || '')}" placeholder="Used in your greeting and message sign-offs"></label>
+          ${ctx.cloud ? `<p class="muted small">Your greeting and message sign-offs use <strong>${esc(settings.userName)}</strong>, the name on your Google account.</p>` : `<label class="field"><span>Your name</span><input data-field="userName" value="${esc(settings.userName === 'there' ? '' : settings.userName || '')}" placeholder="Used in your greeting and message sign-offs"></label>`}
           <label class="field"><span>Currency symbol</span><input data-field="currency" value="${esc(settings.currency || '₹')}" maxlength="4"></label>
         </section>
         <section class="panel glass stagger">
@@ -1307,7 +1309,7 @@ function renderSettings(ctx) {
           </div>
           ${ui.tagError ? `<p class="field-error" data-error-for="tagName">${esc(ui.tagError)}</p>` : ''}
         </section>
-        <section class="panel glass stagger">
+        ${ctx.cloud ? renderCloudDataPanel(ctx, `${plural(contacts.length, 'contact')}, ${plural(ctx.companies.length, 'company', 'companies')}, ${plural(deals.length, 'deal')}, ${plural(activities.length, 'activity', 'activities')}`, hasRecords) : `<section class="panel glass stagger">
           <header class="panel-head"><h2>Data Management</h2></header>
           <p class="muted small">${plural(contacts.length, 'contact')}, ${plural(ctx.companies.length, 'company', 'companies')}, ${plural(deals.length, 'deal')}, ${plural(activities.length, 'activity', 'activities')} stored in this browser.</p>
           <div class="data-actions">
@@ -1316,7 +1318,8 @@ function renderSettings(ctx) {
             <button type="button" class="btn ghost" data-action="reset-demo">${icon('refresh', 16)}Reset Demo Data</button>
             <button type="button" class="btn danger-ghost" data-action="clear-all">${icon('trash', 16)}Clear All Data</button>
           </div>
-        </section>
+          ${excelBlock({ canImport: true, hasRecords })}
+        </section>`}
         <section class="panel glass stagger">
           <header class="panel-head"><h2>Keyboard Shortcuts</h2></header>
           ${shortcutList()}
@@ -1378,7 +1381,7 @@ export function renderOverlay(ctx) {
       </div>`;
   }
   if (!ui.modal) return '';
-  return renderSheet(ctx) || renderModal(ctx);
+  return (ctx.cloud && renderCloudOverlay(ctx)) || renderSheet(ctx) || renderModal(ctx);
 }
 
 function renderModal(ctx) {
@@ -1494,6 +1497,12 @@ function renderModal(ctx) {
     iconName = 'upload';
     body = `<p>${esc(modal.preview)}</p><div class="warning-box">${icon('warning', 18)}<span>${esc(IMPORT_WARNING)}</span></div>`;
     actions = `<button type="button" class="btn ghost" data-action="cancel-modal">Cancel</button><button type="button" class="btn danger" data-action="replace-import">Replace all data</button>`;
+  } else if (modal.type === 'excel-import') {
+    title = 'Import from Excel';
+    iconName = 'sheet';
+    body = excelPreview(modal);
+    const { changes } = modal.plan;
+    actions = modal.busy ? '' : `<button type="button" class="btn ghost" data-action="cancel-modal">${changes ? 'Cancel' : 'Close'}</button>${changes ? `<button type="button" class="btn primary" data-action="apply-excel">Import ${esc(plural(changes, 'change'))}</button>` : ''}`;
   }
 
   return modalFrame({ type: modal.type, title, iconName, body, actions });

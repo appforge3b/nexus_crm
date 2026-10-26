@@ -10,7 +10,8 @@ import { isPlanned, shiftDate, shortDate } from './agenda.js';
 import { mailtoLink, renderTemplate, templatesFrom, waLink } from './messaging.js';
 import { createDictation, formatClock, speechFactory as browserSpeech, suggestTitle } from './voice.js';
 import { SHEET_TYPES, composerContext, whenPreset } from './sheets.js';
-import { companyHint, localDateTime } from './view-helpers.js';
+import { companyHint, localDateTime, plural } from './view-helpers.js';
+import { renderAccount, renderAccountMenu, renderSyncBanner } from './cloud-views.js';
 import {
   validateActivity,
   validateCompany,
@@ -26,16 +27,19 @@ import {
   deleteDealMessage,
   importPreviewText,
 } from './copy.js';
-import { exportFilename, formatMoney, formatMoneyCompact } from './format.js';
+import { exportFilename, formatMoney, formatMoneyCompact, spreadsheetFilename } from './format.js';
+import { readXlsx, writeXlsx } from './xlsx.js';
+import { planSpreadsheetImport, workbookSheets } from './spreadsheet.js';
 import { icon } from './icons.js';
 import { esc } from './markup.js';
 import { DRAWERS, hideTooltip, mountChart } from './chart-render.js';
 import { burst, countUp, startParticleField } from './fx.js';
 
+const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const ANIMATE = typeof navigator !== 'undefined' && !/jsdom/i.test(navigator.userAgent || '');
 const TOAST_ICON = { success: 'bolt', error: 'warning', info: 'chronicle' };
 const cssValue = (value) => String(value).replace(/["\\]/g, '\\$&');
-const FOCUS_ATTRS = ['data-field', 'data-stage-id', 'data-tag-name', 'data-tag-color', 'data-move-stage', 'data-picker-for', 'data-template-name', 'data-template-body', 'data-stakeholder-role'];
+const FOCUS_ATTRS = ['data-field', 'data-stage-id', 'data-tag-name', 'data-tag-color', 'data-move-stage', 'data-picker-for', 'data-template-name', 'data-template-body', 'data-stakeholder-role', 'data-cloud-field', 'data-member-role'];
 
 let stopPrevious = () => {};
 
@@ -53,8 +57,11 @@ export function createApp({
   openUrl = null,
   speechFactory = undefined,
   clipboard = undefined,
+  store: providedStore = null,
+  cloud = null,
 }) {
-  const store = new Store({ storage, clock, seed, storageKey });
+  const store = providedStore ?? new Store({ storage, clock, seed, storageKey });
+  if (cloud) demoMode = false;
   const ui = {
     collapsed: false,
     menuOpen: false,
@@ -135,7 +142,7 @@ export function createApp({
     return {
       route: parseRoute(window.location.hash),
       now: now(),
-      settings: store.getSettings(),
+      settings: cloud ? { ...store.getSettings(), userName: cloud.firstName() } : store.getSettings(),
       contacts: store.getAll('contacts'),
       companies: store.getAll('companies'),
       deals: store.getAll('deals'),
@@ -144,6 +151,7 @@ export function createApp({
       orders: store.getAll('orders'),
       tags: store.getAll('tags'),
       ui,
+      cloud: cloud ? cloud.view() : null,
     };
   }
 
@@ -162,6 +170,7 @@ export function createApp({
       }
     }
     if (dictation && !(ui.modal?.type === 'voice' && ui.modal.phase === 'recording')) endDictation();
+    cloud?.onRoute(ctx.route.view);
     updateShell(ctx);
     const viewChanged = renderMain(ctx);
     renderOverlayLayer(ctx);
@@ -218,6 +227,21 @@ export function createApp({
         if (id === ctx.route.view) link.setAttribute('aria-current', 'page');
         else link.removeAttribute('aria-current');
       });
+    }
+    if (ctx.cloud) {
+      paintSlot(root.querySelector('[data-account]'), renderAccount(ctx.cloud));
+      paintSlot(root.querySelector('[data-account-menu]'), renderAccountMenu(ctx.cloud));
+      const banner = root.querySelector('[data-sync-banner]');
+      const html = renderSyncBanner(ctx.cloud.status);
+      paintSlot(banner, html);
+      banner.hidden = !html;
+    }
+  }
+
+  function paintSlot(el, html) {
+    if (el && el.dataset.html !== html) {
+      el.innerHTML = html;
+      el.dataset.html = html;
     }
   }
 
@@ -510,6 +534,7 @@ export function createApp({
       render();
       return;
     }
+    if (ui.modal?.busy) return;
     if (ui.modal || ui.celebrate) {
       if (ui.modal?.type === 'convert') confirmConversion(store, ui.modal.dealId, false, { now: now() });
       ui.modal = null;
@@ -674,6 +699,7 @@ export function createApp({
       return;
     }
     const target = event.target;
+    if (cloud && !target.closest?.('[data-account], [data-account-menu]') && cloud.closeMenus()) render();
     if (target?.hasAttribute?.('data-overlay')) {
       closeTop();
       return;
@@ -800,6 +826,7 @@ export function createApp({
       event?.preventDefault();
       return;
     }
+    if (cloud?.handleAction(action, el)) return;
     switch (action) {
       case 'toast-action': {
         const toast = ui.toasts.find((item) => item.id === el.dataset.toastId);
@@ -924,6 +951,7 @@ export function createApp({
       case 'save-modal': return saveModal();
       case 'cancel-modal':
       case 'convert-no':
+        if (ui.modal?.busy) return;
         if (ui.modal?.type === 'convert') confirmConversion(store, ui.modal.dealId, false, { now: now() });
         ui.modal = null;
         ui.help = false;
@@ -1052,9 +1080,21 @@ export function createApp({
       case 'delete': return askDelete(el.dataset.kind, el.dataset.id);
       case 'add-tag': return addTag();
       case 'export': return exportBackup();
+      case 'excel-template': return downloadWorkbook({ blank: true });
+      case 'excel-export': return downloadWorkbook({ blank: false });
+      case 'apply-excel': return applyWorkbook();
       case 'replace-import': {
         const json = ui.importJson;
         ui.modal = null;
+        if (cloud) {
+          pushToast('info', 'Importing your backup…');
+          render();
+          cloud.importDocument(json).then(
+            () => pushToast('success', 'Backup imported for the whole team'),
+            (error) => pushToast('error', error.message || 'Import failed'),
+          ).finally(render);
+          return;
+        }
         store.importAll(json);
         pushToast('success', 'Backup imported');
         render();
@@ -1082,9 +1122,21 @@ export function createApp({
           onYes: () => {
             ui.confirm = {
               title: 'Really erase everything?',
-              message: 'Are you sure? This will erase every contact, deal, and note.',
+              message: cloud
+                ? `Are you sure? This erases every contact, deal, and note in ${cloud.state.me.tenant.name} for the whole team.`
+                : 'Are you sure? This will erase every contact, deal, and note.',
               yes: 'Clear data',
               onYes: () => {
+                if (cloud) {
+                  ui.confirm = null;
+                  ui.selectedCustomerId = null;
+                  render();
+                  cloud.clearAll().then(
+                    () => pushToast('info', 'All data cleared'),
+                    (error) => pushToast('error', error.message || 'Could not clear the data'),
+                  ).finally(render);
+                  return;
+                }
                 store.clearAll();
                 ui.selectedCustomerId = null;
                 ui.confirm = null;
@@ -1888,15 +1940,14 @@ export function createApp({
     render();
   }
 
-  function exportBackup() {
-    const json = store.exportAll();
+  function download(filename, blob, decorate = () => {}) {
     const link = document.createElement('a');
-    link.download = exportFilename(now());
-    link.dataset.export = json;
+    link.download = filename;
+    decorate(link);
     link.hidden = true;
     document.body.appendChild(link);
     if (ANIMATE && typeof URL.createObjectURL === 'function') {
-      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+      const url = URL.createObjectURL(blob);
       link.href = url;
       link.click();
       setTimeout(() => {
@@ -1906,7 +1957,32 @@ export function createApp({
     } else {
       link.href = '#';
     }
-    pushToast('success', `Exported ${link.download}`);
+  }
+
+  function exportBackup() {
+    const json = store.exportAll();
+    const filename = exportFilename(now());
+    download(filename, new Blob([json], { type: 'application/json' }), (link) => {
+      link.dataset.export = json;
+    });
+    pushToast('success', `Exported ${filename}`);
+    render();
+  }
+
+  async function downloadWorkbook({ blank }) {
+    const at = now();
+    const workspace = cloud ? cloud.state.me.tenant.name : '';
+    const filename = blank ? 'nexus-import-template.xlsx' : spreadsheetFilename(at, workspace);
+    try {
+      const sheets = workbookSheets(JSON.parse(store.exportAll()), { settings: store.getSettings(), blank, workspace, now: at });
+      const bytes = await writeXlsx(sheets, { now: at });
+      download(filename, new Blob([bytes], { type: XLSX_TYPE }), (link) => {
+        link.workbook = bytes;
+      });
+      pushToast('success', blank ? `Downloaded ${filename}` : `Exported ${plural(store.recordCount(), 'record')} to ${filename}`);
+    } catch {
+      pushToast('error', 'The Excel file could not be created');
+    }
     render();
   }
 
@@ -1949,6 +2025,89 @@ export function createApp({
     render();
   }
 
+  async function readBytes(file) {
+    if (typeof file?.arrayBuffer === 'function') return file.arrayBuffer();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  async function loadWorkbook(file) {
+    if (cloud && !cloud.view().isAdmin) return;
+    let workbook;
+    try {
+      workbook = await readXlsx(await readBytes(file));
+    } catch (error) {
+      pushToast('error', /excel/i.test(error?.message || '') ? error.message : 'That file could not be read as an Excel workbook');
+      render();
+      return;
+    }
+    if (cloud) {
+      try {
+        await cloud.refresh();
+      } catch { /* plan against the cached copy when the latest can't be fetched */ }
+    }
+    let plan;
+    try {
+      plan = planSpreadsheetImport(workbook, JSON.parse(store.exportAll()), { now: now(), settings: store.getSettings() });
+    } catch {
+      pushToast('error', 'That workbook could not be checked. Start from a template downloaded from Settings.');
+      render();
+      return;
+    }
+    ui.workbookOps = plan.ops;
+    openModal({
+      type: 'excel-import',
+      fileName: file.name || 'Workbook',
+      plan: { counts: plan.counts, problems: plan.problems, warnings: plan.warnings, rows: plan.rows, changes: plan.ops.length },
+    });
+    render();
+  }
+
+  async function applyWorkbook() {
+    const modal = ui.modal;
+    const ops = ui.workbookOps || [];
+    if (modal?.type !== 'excel-import' || modal.busy || !ops.length) return;
+    const skipped = modal.plan.problems.length;
+    const skippedNote = skipped ? ` ${plural(skipped, 'row')} with problems ${skipped === 1 ? 'was' : 'were'} skipped.` : '';
+    if (!cloud) {
+      try {
+        store.applyChanges(ops);
+        pushToast('success', `Imported ${plural(ops.length, 'change')}.${skippedNote}`);
+      } catch (error) {
+        pushToast('error', error.message);
+      }
+      ui.modal = null;
+      ui.workbookOps = null;
+      render();
+      return;
+    }
+    modal.busy = { done: 0, total: ops.length };
+    render();
+    try {
+      const result = await cloud.pushChanges(ops, {
+        onProgress: (done, total) => {
+          if (ui.modal !== modal) return;
+          modal.busy = { done, total };
+          render();
+        },
+      });
+      const notes = [];
+      if (result.rejected.length) notes.push(`${plural(result.rejected.length, 'record')} ${result.rejected.length === 1 ? 'was' : 'were'} refused by the server: ${result.rejected[0].message}`);
+      if (result.conflicts) notes.push(`${plural(result.conflicts, 'record')} had just been edited by a teammate and ${result.conflicts === 1 ? 'was' : 'were'} replaced with your file's version.`);
+      pushToast(result.rejected.length ? 'error' : 'success', `Imported ${plural(result.saved, 'change')} for the whole team.${skippedNote}${notes.length ? ` ${notes.join(' ')}` : ''}`);
+    } catch (error) {
+      const saved = error.saved ? `Saved ${error.saved.toLocaleString()} of ${ops.length.toLocaleString()} changes, then stopped: ` : '';
+      pushToast('error', `${saved}${error.message || 'Import failed'}${error.saved ? '. Import the same file again to finish.' : ''}`);
+    }
+    if (ui.modal === modal) ui.modal = null;
+    ui.workbookOps = null;
+    render();
+  }
+
   function filterPicker(dialog, input) {
     const select = dialog.querySelector(`[data-field="${input.dataset.pickerFor}"]`);
     if (!select) return;
@@ -1986,6 +2145,7 @@ export function createApp({
 
   function onInput(event) {
     const el = event.target;
+    if (cloud?.handleInput(el)) return;
     const dialog = el.closest('[role="dialog"], [role="alertdialog"]');
     if (dialog) {
       if (el.dataset.pickerFor) filterPicker(dialog, el);
@@ -2053,10 +2213,12 @@ export function createApp({
 
   function onChange(event) {
     const el = event.target;
+    if (cloud?.handleChange(el)) return;
     const field = el.dataset.field;
-    if (field === 'import' && el.files?.[0]) {
+    if ((field === 'import' || field === 'excel-import') && el.files?.[0]) {
       const file = el.files[0];
-      loadImport(file);
+      if (field === 'import') loadImport(file);
+      else loadWorkbook(file);
       try {
         el.value = '';
       } catch { /* some environments disallow resetting file inputs */ }
@@ -2315,6 +2477,11 @@ export function createApp({
   }
 
   function onKey(event) {
+    if (cloud?.handleKey(event)) return;
+    if (event.key === 'Escape' && cloud?.closeMenus()) {
+      render();
+      return;
+    }
     if (event.key === 'Tab' && lastOverlay && trapFocus(event)) {
       event.preventDefault();
       return;
@@ -2384,6 +2551,7 @@ export function createApp({
     window.addEventListener('focus', onBack);
     const onStore = () => render();
     store.subscribe(onStore);
+    cloud?.connect({ ui, store, render, pushToast });
     stopPrevious = () => {
       alive = false;
       endDictation();
@@ -2401,7 +2569,13 @@ export function createApp({
       store.unsubscribe(onStore);
     };
     render();
+    cloud?.offerLegacyImport();
   }
 
-  return { store, start };
+  function notify(tone, message) {
+    pushToast(tone, message);
+    render();
+  }
+
+  return { store, start, notify };
 }

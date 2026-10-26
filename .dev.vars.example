@@ -1,0 +1,7 @@
+# Copy to .dev.vars for `npm run dev`. Never commit .dev.vars.
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+COOKIE_SECRET=any-long-random-string
+SUPER_ADMIN_EMAILS=you@gmail.com
+# Enables http://localhost:8788/auth/dev?email=you@gmail.com so you can work without Google.
+DEV_LOGIN=true

@@ -26,6 +26,13 @@ export const LOG_LABEL = { call: 'Log Call', email: 'Log Email', meeting: 'Log M
 export const PRIORITIES = ['critical', 'high', 'medium', 'low'];
 export const PRIORITY_LABEL = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' };
 
+export function brandMark() {
+  return `<svg class="brand-mark" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
+    <defs><linearGradient id="nx-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#a855f7"/></linearGradient></defs>
+    <path d="M6 26V6l20 20V6" fill="none" stroke="url(#nx-grad)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+}
+
 export function money(amount, currency, compact = false) {
   return compact ? formatMoneyCompact(amount, currency) : formatMoney(amount, currency);
 }
@@ -160,4 +167,57 @@ export function contactActions({ contactId = '', dealId = '', companyId = '' } =
     <button type="button" class="action-btn" data-action="plan-step" ${refs}>${icon('flag', 16)}<span>Next step</span></button>
     <button type="button" class="action-btn" data-action="voice-note" ${refs}>${icon('mic', 16)}<span>Voice note</span></button>
   </div>`;
+}
+
+export function excelBlock({ canImport, hasRecords, importNote = '' }) {
+  return `
+    <div class="excel-block" data-region="excel">
+      <h3>${icon('sheet', 16)}Excel</h3>
+      <p class="muted small">Add or edit records in bulk in Excel, Numbers or Google Sheets. Rows with an ID update that record; rows without one are added.</p>
+      <div class="data-actions">
+        <button type="button" class="btn ghost" data-action="excel-template">${icon('download', 16)}Blank template</button>
+        <button type="button" class="btn ghost" data-action="excel-export"${hasRecords ? '' : ' disabled'}>${icon('download', 16)}Export with records</button>
+        ${canImport ? `<label class="btn ghost file-btn">${icon('upload', 16)}Import from Excel<input type="file" data-field="excel-import" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>` : ''}
+      </div>
+      ${importNote ? `<p class="muted small">${esc(importNote)}</p>` : ''}
+    </div>`;
+}
+
+const EXCEL_ROWS = [
+  ['companies', 'Companies'],
+  ['contacts', 'Contacts'],
+  ['deals', 'Deals'],
+  ['activities', 'Activities'],
+  ['customers', 'Customers'],
+  ['orders', 'Orders'],
+  ['tags', 'Tags'],
+];
+const PROBLEMS_SHOWN = 50;
+
+export function excelPreview(modal) {
+  const { counts, problems, warnings, changes, rows } = modal.plan;
+  if (modal.busy) {
+    const { done, total } = modal.busy;
+    const percent = total ? Math.round((done / total) * 100) : 0;
+    return `
+      <p>Saving ${esc(done.toLocaleString())} of ${esc(total.toLocaleString())} changes…</p>
+      <div class="excel-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>
+      <p class="muted small">Keep this tab open until it finishes.</p>`;
+  }
+  const lines = EXCEL_ROWS.filter(([key]) => counts[key] && (counts[key].created || counts[key].updated || counts[key].unchanged));
+  const number = (value) => (value ? esc(value.toLocaleString()) : '<span class="muted">–</span>');
+  return `
+    <p class="muted small">${esc(modal.fileName)} · ${esc(plural(rows, 'row'))} read</p>
+    ${lines.length ? `<table class="excel-summary">
+      <thead><tr><th scope="col">Records</th><th scope="col">New</th><th scope="col">Updated</th><th scope="col">Unchanged</th></tr></thead>
+      <tbody>${lines.map(([key, label]) => `<tr data-collection="${key}"><th scope="row">${label}</th><td>${number(counts[key].created)}</td><td>${number(counts[key].updated)}</td><td>${number(counts[key].unchanged)}</td></tr>`).join('')}</tbody>
+    </table>` : ''}
+    ${!changes && !problems.length ? '<p>Everything in this file already matches NEXUS, so there is nothing to import.</p>' : ''}
+    ${problems.length ? `<div class="warning-box excel-problems">${icon('warning', 18)}<div>
+      <strong>${esc(plural(problems.length, 'row'))} ${problems.length === 1 ? 'has a problem and' : 'have problems and'} will be skipped</strong>
+      <ul>${problems.slice(0, PROBLEMS_SHOWN).map((problem) => `<li>${problem.sheet ? `<span class="excel-where">${esc(problem.sheet)} row ${esc(problem.row)}</span> ` : ''}${esc(problem.message)}</li>`).join('')}</ul>
+      ${problems.length > PROBLEMS_SHOWN ? `<p class="small">…and ${esc((problems.length - PROBLEMS_SHOWN).toLocaleString())} more. Fix these in the file and import it again; rows already imported will show as unchanged.</p>` : ''}
+    </div></div>` : ''}
+    ${warnings.length ? `<ul class="excel-warnings muted small">${warnings.map((warning) => `<li>${esc(warning)}</li>`).join('')}</ul>` : ''}
+    ${changes ? '<p class="muted small">Nothing is deleted. Records not in the file stay as they are.</p>' : ''}`;
 }

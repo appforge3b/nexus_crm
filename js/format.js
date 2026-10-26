@@ -92,6 +92,11 @@ export function exportFilename(date) {
   return `nexus-backup-${localKey(date)}.json`;
 }
 
+export function spreadsheetFilename(date, workspace = '') {
+  const slug = String(workspace).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'data';
+  return `nexus-${slug}-${localKey(date)}.xlsx`;
+}
+
 export function initials(name) {
   const parts = String(name ?? '').trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return '?';

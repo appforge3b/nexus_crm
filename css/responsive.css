@@ -80,6 +80,11 @@
     padding-bottom: 72px;
   }
 
+  /* No stacking context here, so the open drawer (z 45) layers above the page-level scrim (z 44). */
+  .shell {
+    z-index: auto;
+  }
+
   .sidebar {
     position: fixed;
     left: 0;

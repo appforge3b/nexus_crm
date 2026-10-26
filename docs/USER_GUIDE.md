@@ -23,10 +23,10 @@ This guide provides everything needed to:
 
 NEXUS is deployed in two distinct environments to ensure client presentations and real business operations never interfere with each other:
 
-| Environment | Live URL | Primary Purpose | Database State | Storage Key |
+| Environment | Live URL | Primary Purpose | Sign-in | Where data lives |
 |---|---|---|---|---|
-| **Demo Cockpit** | **[https://crm.snilld.in](https://crm.snilld.in)** | Product walkthroughs, rep onboarding, sandbox testing | Pre-seeded with realistic enterprise deals, contacts, activities, and orders | `nexus_data` |
-| **Business Production** | **[https://scrm.snilld.in](https://scrm.snilld.in)** | Real company sales pipeline, confidential customer records | Starts 100% empty; clean slate for your enterprise | `nexus_scrm_data` |
+| **Demo Cockpit** | **[https://crm.snilld.in](https://crm.snilld.in)** | Product walkthroughs, rep onboarding, sandbox testing | None | Only in your browser, pre-seeded with realistic sample data |
+| **Business App** | **[https://scrm.snilld.in](https://scrm.snilld.in)** | Your company's real pipeline, shared with your team | Google, invite-only | Your company's private workspace on the server, with a copy on each device for speed and offline use |
 
 ```
                               ┌─────────────────────────────┐
@@ -36,16 +36,56 @@ NEXUS is deployed in two distinct environments to ensure client presentations an
                      ┌───────────────────────┴───────────────────────┐
                      ▼                                               ▼
          DEMO: crm.snilld.in                            BUSINESS: scrm.snilld.in
-    ┌───────────────────────────┐                   ┌───────────────────────────┐
-    │ • Auto-seeded demo data   │                   │ • 100% Empty initial state│
-    │ • Ideal for sales demos   │                   │ • Dedicated business data │
-    │ • Reset Demo Data enabled │                   │ • Storage: nexus_scrm_data│
-    │ • Storage: nexus_data     │                   │ • Reset Demo Data hidden  │
-    └───────────────────────────┘                   └───────────────────────────┘
+    ┌───────────────────────────┐                   ┌───────────────────────────────┐
+    │ • Auto-seeded demo data   │                   │ • Sign in with Google         │
+    │ • Ideal for sales demos   │                   │ • One workspace per company   │
+    │ • Reset Demo Data enabled │                   │   (tenant), shared by a team  │
+    │ • Stays in this browser   │                   │ • Syncs across devices, works │
+    └───────────────────────────┘                   │   offline, Reset Demo hidden  │
+                                                    └───────────────────────────────┘
 ```
 
 > [!NOTE]
-> **Browser Storage Isolation:** Modern web security enforces the Same-Origin Policy. Records entered on `scrm.snilld.in` are physically isolated from `crm.snilld.in`. Data never leaks between subdomains.
+> **Workspace isolation:** each company's workspace is identified by its tenant ID, and the server only ever returns the workspace you're signed in to. One company's records can never be seen from another company's workspace.
+
+### 1.1 Signing In (Business App)
+![Google sign-in](./screenshots/cloud-signin.png)
+
+1. Open **[scrm.snilld.in](https://scrm.snilld.in)** and choose **Continue with Google**.
+2. Use the Gmail address your workspace invited. On your first sign-in you join that workspace automatically.
+3. Not invited yet? You'll see **You're not in a workspace yet**. Ask your workspace owner or admin to invite your address, then choose **Check again**.
+4. Invited by more than one company? Pick the workspace to open. You can switch at any time from the account menu.
+
+Your session lasts 30 days on that device. **Sign out** (account menu or Settings) also removes the workspace copy from the device, so do it on shared computers. If you still have changes that haven't synced, NEXUS warns you before signing out.
+
+### 1.2 The Account Menu and Sync
+![Account menu](./screenshots/cloud-account.png)
+
+Your avatar sits at the bottom of the sidebar, with your workspace's name under it. The small dot shows sync status: **green** means all changes are saved, **pulsing purple** means it's syncing, **grey** means offline, and **red** means there's a problem. Click it to see your account and workspace, open **Team & workspace** settings, switch workspace, or sign out.
+
+**Working offline:** NEXUS keeps working without signal. A banner tells you you're offline and how many changes are waiting. They sync automatically when you reconnect, even if you close the tab in between. Your teammates' changes appear when you return to the tab, and otherwise within a minute.
+
+![Offline banner on a phone](./screenshots/m-cloud-offline.png)
+
+### 1.3 Your Team, Roles and Invitations
+![Workspace and team settings](./screenshots/cloud-team.png)
+
+In **Settings**, the **Workspace** panel shows the company name and its permanent **Tenant ID** (use the copy button when talking to support). The **Team** panel lists everyone in the workspace.
+
+| Role | What they can do |
+|---|---|
+| **Member** | Work with every contact, deal, Chronicle entry and customer. Export a backup or an Excel file. |
+| **Admin** | Also rename the workspace, invite people, change or remove members and admins, and import records from Excel. |
+| **Owner** | Everything, including inviting owners, importing a backup, and clearing all data. Every workspace keeps at least one owner. |
+
+**To invite a teammate** (owners and admins): in **Team**, type their Gmail address, pick a role, and choose **Invite**. No email is sent. Tell them to open the app and sign in with Google using that address. Until they do, they're listed under **Waiting to join**, where you can **Revoke** the invitation. Invitations last 30 days.
+
+**To change a role or remove someone**, use the role picker or the bin icon on their row. Anyone can leave a workspace with the icon on their own row, except the last owner.
+
+### 1.4 Creating Company Workspaces (Super Admins)
+![Administration console](./screenshots/cloud-admin.png)
+
+Platform operators open **[scrm.snilld.in/admin](https://scrm.snilld.in/admin)**. To onboard a company, enter the **Company name**, an optional **Tenant ID** (for example `tnt_helios_bank`; it can't be changed later, and one is suggested from the name), and the **Owner's Gmail**, then choose **Create tenant**. The owner can sign in straight away and invite the rest of their team. Each tenant card shows its members, records and pending invitations, and offers **Invite owner**, **Rename**, **Suspend**, and **Reactivate**. Suspending hides the workspace from its members without deleting anything.
 
 ---
 
@@ -59,6 +99,8 @@ Before your sales team logs their first call or moves a deal, spend 5 minutes co
 1. Navigate to **Settings** in the left sidebar.
 2. Under **Profile & Organization**, enter your **User Name** or Company Name (e.g., `Acme Sales Lead`).
 3. This dynamically personalizes your greeting on **The Briefing** dashboard.
+
+In the business app there's nothing to enter here: each person's greeting and message sign-offs use the first name on their own Google account. Currency, stages, tags, and message templates are shared by the whole workspace.
 
 ### Step 2.2: Currency Configuration
 NEXUS formats deal values, weighted pipelines, and lifetime revenues with clean international formatting:
@@ -349,6 +391,17 @@ Because NEXUS operates on private client-side browser storage without transmitti
 4. Review the preview summary (e.g. `12 contacts, 8 deals, 24 activities`).
 5. Confirm the import. The complete CRM state restores immediately.
 
+In the business app you don't need this to move to a new machine: just sign in there. Importing a JSON file is for restoring a backup. To add or update records in bulk, use Excel instead (see [5.5](#55-adding-and-updating-records-in-bulk-with-excel)). Only owners can do it, and only while the workspace is empty, so a backup is never mixed into live data. To restore over existing data, an owner uses **Clear All Data** first.
+
+### 5.2a Bringing Over Data Saved Before Sign-In
+![Importing data saved before sign-in](./screenshots/cloud-legacy-import.png)
+
+If you used `scrm.snilld.in` before sign-in was added, your records were saved only in that browser. When a workspace owner signs in **in that same browser** and the workspace is still empty, NEXUS offers **Bring your existing data into [workspace]** with a count of what it found:
+- **Import into workspace** uploads it for the whole team. The old copy stays in the browser as a backup and the offer doesn't appear again.
+- **Not now** leaves everything as it is. **Settings ➔ Data Management** keeps a tip with **Import it** and **Download a copy** until you decide.
+- If the data is in a different browser, export it there first (before the upgrade, or on the old site) and use **Import Data** in the new workspace.
+- Members who also have an old copy see the same tip with **Download a copy**, so they can send the file to the owner.
+
 ### 5.3 Automatic Upgrades
 When NEXUS adds new capabilities (such as companies and multiple stakeholders per deal), your existing data is upgraded automatically the next time you open the app:
 - Contacts with the same company name are grouped into one company record.
@@ -359,20 +412,70 @@ Before upgrading, NEXUS keeps an untouched copy of your previous data in the bro
 
 ### 5.4 Resetting Demo Data vs. Clearing All Data
 - **Reset Demo Data (Available on Demo instance):** Replaces all records with realistic sample data.
-- **Clear All Data:** Requires two separate security confirmation prompts. Erases all records and returns the instance to a pristine empty state.
+- **Clear All Data:** Requires two separate security confirmation prompts. Erases all records and returns the instance to a pristine empty state. In the business app only owners can do this, and it clears the workspace for the whole team.
+
+### 5.5 Adding and Updating Records in Bulk with Excel
+![The Excel tools in Data Management](./screenshots/excel-panel.png)
+
+For loading a lot of data at once, or tidying many records together, use the **Excel** tools in **Settings ➔ Data Management**. They work with Microsoft Excel, Apple Numbers, LibreOffice and Google Sheets (**File ➔ Download ➔ Microsoft Excel (.xlsx)**).
+
+- **Blank template** downloads an empty workbook ready to fill in. A copy is also kept in the repository at [`docs/templates/nexus-import-template.xlsx`](./templates/nexus-import-template.xlsx), with a filled-in example at [`docs/templates/nexus-sample-data.xlsx`](./templates/nexus-sample-data.xlsx).
+- **Export with records** downloads everything currently in NEXUS (or in your workspace) as a workbook, for example `nexus-snilld-2026-10-25.xlsx`. Edit it and import the same file to make bulk changes.
+- **Import from Excel** reads a workbook and shows a preview before anything is saved. In the business app, owners and admins can import. Members can still download both files.
+
+#### How the workbook is laid out
+The first sheet, **Instructions**, explains every column. Then there is one sheet per kind of record. Columns marked `*` are required for new rows. Clicking a cell under a header shows a hint, and columns with fixed choices (Status, Stage, Priority, Type, Role) have dropdowns.
+
+| Sheet | One row per | A row without an ID updates the record with the same… |
+|---|---|---|
+| **Companies** | company | name |
+| **Contacts** | person | email, or else name and company |
+| **Deals** | opportunity | title and primary contact |
+| **Deal people** | person on a deal, with their role | (adds people to the deal) |
+| **Activities** | call, email, meeting, note, task or WhatsApp, done or planned | contact, type, title and time |
+| **Customers** | won account | contact, or else company |
+| **Orders** | order from a customer | customer, description and date |
+| **Tags** | tag | name |
+
+You only need the sheets you use. A file with just a **Contacts** sheet is fine.
+
+#### The rules
+1. **Rows with an ID update that record.** Rows exported from NEXUS keep their ID in the first column. Keep it, and that exact record is updated even if you change the name or email.
+2. **Rows without an ID are new**, unless they match an existing record as listed in the table above. A new contact with the email of an existing one updates that contact instead of creating a duplicate.
+3. **Refer to other records by something readable:** a contact by email (or name), a company by name, a deal by title. Companies and tags that don't exist yet are created for you. Contacts, deals and customers must be on their own sheet first.
+4. **When you update a record, every column in the sheet is applied, including blank cells.** To leave a field as it is, delete that whole column from the sheet rather than emptying cells.
+5. **Nothing is ever deleted.** Records that aren't in the file stay as they are.
+6. **Amounts and dates are flexible.** `420000`, `₹4,20,000`, `4.2L`, `1.5Cr` and `50k` all work. Dates can be Excel dates, `2026-12-31`, or day-first `31/12/2026` (with an optional time such as `31/12/2026 14:30`).
+7. **Deal people:** listing a deal on this sheet sets everyone on that deal. The primary contact from the Deals sheet always stays on it.
+
+#### Importing
+![Import preview with problem rows](./screenshots/excel-preview.png)
+
+After you pick the file, NEXUS shows how many records will be **new**, **updated** and **unchanged** on each sheet. Rows with a problem, such as an invalid email or a deal whose contact can't be found, are listed with their sheet and row number and are skipped. Choose **Import N changes** to save the rest. In the business app the changes go to the server in batches, with a progress bar; keep the tab open until it finishes.
+
+It's safe to import the same file again after fixing the problem rows. Rows that were already imported show as unchanged, so nothing is duplicated.
+
+#### Loading a large amount of data into a workspace (for example `tnt_snilld`)
+1. An owner or admin of the workspace signs in and opens **Settings ➔ Data Management**.
+2. Choose **Export with records** if the workspace already has data, or **Blank template** if it's empty.
+3. Fill in the sheets in this order: **Companies**, **Contacts**, then **Deals**, **Deal people**, **Activities**, **Customers** and **Orders**. Leave the ID column blank for new rows.
+4. For very large loads, split the work into files of a few thousand rows each (for example, contacts first, then deals). Each file is previewed on its own, so problems are easier to fix.
+5. Choose **Import from Excel**, check the preview, fix any listed rows in the file if needed, and choose **Import N changes**. Teammates see the new records on their next sync.
+
+On the demo site, data stays in this browser, which can hold only about 5 MB (very roughly ten thousand records). If a file is too big, NEXUS says so and imports nothing. Use the business app for large data.
 
 ---
 
 ## ❓ 6. Frequently Asked Questions (FAQ)
 
 #### Q: How do I invite colleagues or share data?
-**A:** In the current phase, NEXUS operates as an ultra-fast, zero-cloud client cockpit. To sync state with team members, export your weekly master backup via **Settings > Export All Data** and import it on your colleague's device. Cloudflare D1/Workers synchronization is slated for Phase 2.
+**A:** Use the business app at **scrm.snilld.in**. An owner or admin invites each colleague's Gmail address in **Settings ➔ Team** (see [1.3](#13-your-team-roles-and-invitations)). Everyone then works in the same workspace, and changes sync between them automatically.
 
 #### Q: Will clearing my browser cache delete my CRM data?
-**A:** Clearing "Cookies and other site data" in Chrome/Firefox removes `localStorage`. Always take regular JSON backups using the **Export All Data** button in Settings before clearing browser caches.
+**A:** In the business app, no: your workspace is stored on the server. Clearing site data only removes this device's copy and signs you out. Any changes made offline that haven't synced yet would be lost, so reconnect first. On the demo, clearing "Cookies and other site data" removes everything, so export a backup first.
 
 #### Q: Can I run this offline?
-**A:** Yes! Once the page is loaded, NEXUS functions without an internet connection. You can add deals, log calls, and inspect reports entirely offline while traveling.
+**A:** Yes! Once the page is loaded, NEXUS works without an internet connection. You can add deals, log calls, and inspect reports while traveling. In the business app your changes sync when you're back online. You need to have signed in on that device at least once.
 
 #### Q: How do I switch the currency symbol?
 **A:** Go to **Settings**, locate the **Currency** selector, and choose your preferred symbol (`₹`, `$`, `€`, `£`, `¥`). All cards and statistics update immediately.

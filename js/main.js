@@ -1,18 +1,26 @@
 import { createApp } from './app.js';
+import { bootCloud } from './boot.js';
 
-// If hostname starts with 'scrm' (or URL contains ?empty=1), run in clean/empty mode for business use.
-// Otherwise, run in demo mode with sample records.
-const isCleanInstance =
-  window.location.hostname.includes('scrm') ||
-  new URLSearchParams(window.location.search).has('empty');
+// scrm.* (and any host after ?mode=cloud) runs the multi-tenant app with Google sign-in and server sync.
+// Otherwise NEXUS runs entirely in this browser: the seeded demo, or a clean local copy with ?empty=1.
+const params = new URLSearchParams(window.location.search);
+if (params.get('mode') === 'cloud') localStorage.setItem('nexus:mode', 'cloud');
+if (params.get('mode') === 'local') localStorage.removeItem('nexus:mode');
 
-const app = createApp({
-  root: document.getElementById('app'),
-  storage: localStorage,
-  clock: { now: () => new Date() },
-  seed: !isCleanInstance,
-  storageKey: isCleanInstance ? 'nexus_scrm_data' : 'nexus_data',
-  demoMode: !isCleanInstance,
-});
+const root = document.getElementById('app');
+const clock = { now: () => new Date() };
+const isCloud = window.location.hostname.includes('scrm') || localStorage.getItem('nexus:mode') === 'cloud';
 
-app.start();
+if (isCloud) {
+  bootCloud({ root, storage: localStorage, clock });
+} else {
+  const isCleanInstance = params.has('empty');
+  createApp({
+    root,
+    storage: localStorage,
+    clock,
+    seed: !isCleanInstance,
+    storageKey: isCleanInstance ? 'nexus_scrm_data' : 'nexus_data',
+    demoMode: !isCleanInstance,
+  }).start();
+}

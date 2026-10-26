@@ -148,6 +148,28 @@ describe('Store persistence contract', () => {
     expect(blank.getAll('contacts')).toEqual([]);
   });
 
+  it('applies a batch of imported records in one write, and keeps nothing when storage is full', () => {
+    const { store, storage } = setup();
+    const kept = store.create('contacts', { name: 'Kept' });
+    const events = [];
+    store.subscribe((event) => events.push(event.type));
+    const ops = [
+      { op: 'upsert', collection: 'contacts', id: kept.id, data: { ...kept, title: 'CFO' } },
+      { op: 'upsert', collection: 'tags', id: 't1', data: { id: 't1', name: 'Enterprise', color: '#6366f1' } },
+    ];
+    store.applyChanges(ops);
+    expect(store.getById('contacts', kept.id).title).toBe('CFO');
+    expect(JSON.parse(storage.getItem(STORAGE_KEY)).tags).toHaveLength(1);
+    expect(events).toEqual(['import']);
+
+    const setItem = storage.setItem;
+    storage.setItem = () => { throw new DOMException('full', 'QuotaExceededError'); };
+    expect(() => store.applyChanges([{ op: 'upsert', collection: 'contacts', id: 'new', data: { id: 'new', name: 'Too many' } }])).toThrow(/out of storage space/);
+    storage.setItem = setItem;
+    expect(store.getAll('contacts').map((contact) => contact.name)).toEqual(['Kept']);
+    expect(events).toEqual(['import']);
+  });
+
   it('resetDemo replaces the document with the demo seed', () => {
     const { store } = setup();
     store.create('contacts', { name: 'Temporary', status: 'inactive' });
