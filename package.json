@@ -7,15 +7,24 @@
     "start": "python3 -m http.server 8765",
     "serve": "python3 -m http.server 8765",
     "build": "rm -rf dist && mkdir -p dist && cp index.html dist/ && cp -r css dist/ && cp -r js dist/ && echo '/* /index.html 200' > dist/_redirects",
-    "deploy": "npm run build && npx wrangler pages deploy dist --project-name nexus-crm --branch main --commit-dirty=true",
-    "deploy:scrm": "npm run build && npx wrangler pages deploy dist --project-name nexus-scrm --branch main --commit-dirty=true",
+    "build:scrm": "npm run build && echo '{\"version\":1,\"include\":[\"/api/*\",\"/auth/*\"],\"exclude\":[]}' > dist/_routes.json && printf '/admin/ /admin 301\\n/* /index.html 200\\n' > dist/_redirects",
+    "dev": "npm run build:scrm && wrangler d1 migrations apply nexus-scrm --local && wrangler pages dev --port 8788",
+    "deploy": "npm run build && cd dist && npx wrangler pages deploy . --project-name nexus-crm --branch main --commit-dirty=true",
+    "deploy:scrm": "npm run build:scrm && wrangler d1 migrations apply nexus-scrm --remote && wrangler pages deploy --project-name nexus-scrm --branch main --commit-dirty=true",
     "deploy:all": "npm run deploy && npm run deploy:scrm",
     "deploy:prod": "infisical run --env=prod -- npm run deploy",
-    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply nexus-scrm --local",
+    "db:migrate:remote": "wrangler d1 migrations apply nexus-scrm --remote",
+    "test": "vitest run && vitest run --config vitest.workers.config.js",
+    "template": "node scripts/make-template.mjs && node scripts/make-template.mjs docs/templates/nexus-sample-data.xlsx --sample",
+    "test:app": "vitest run",
+    "test:workers": "vitest run --config vitest.workers.config.js",
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.12.21",
     "jsdom": "^26.1.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wrangler": "^4.72.0"
   }
 }

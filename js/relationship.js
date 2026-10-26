@@ -1,3 +1,5 @@
+import { doneOnly } from './agenda.js';
+
 function recencyPoints(days) {
   if (days <= 1) return 30;
   if (days <= 3) return 25;
@@ -16,7 +18,7 @@ function depthPoints(count) {
 }
 
 export function relationshipStrength(contact, { activities = [], deals = [], customers = [], now }) {
-  const mine = activities.filter((activity) => activity.contactId === contact.id);
+  const mine = doneOnly(activities).filter((activity) => activity.contactId === contact.id && new Date(activity.date) <= now);
   let recency = 0;
   if (mine.length) {
     const last = Math.max(...mine.map((activity) => new Date(activity.date).getTime()));

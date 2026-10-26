@@ -1,0 +1,11 @@
+# Multi-tenant NEXUS (scrm.snilld.in). The demo (crm.snilld.in) is deployed separately, from dist/, without Functions.
+name = "nexus-scrm"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-03-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nexus-scrm"
+# Replace with the id printed by `npx wrangler d1 create nexus-scrm` before the first remote deploy.
+database_id = "ccc3289e-2943-4021-a611-7beb94122321"
+migrations_dir = "migrations"

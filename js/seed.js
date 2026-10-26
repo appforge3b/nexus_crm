@@ -1,5 +1,6 @@
 import { defaultSettings } from './settings.js';
 import { STAGE_PROBABILITY } from './stages.js';
+import { migrate } from './migrate.js';
 
 export const DEFAULT_TAG_NAMES = [
   'Enterprise', 'SMB', 'Tech', 'Finance', 'Decision Maker', 'Influencer', 'Champion', 'Hot Lead',
@@ -38,12 +39,25 @@ const PEOPLE = [
   ['Meera Nair', 'Lumen Health', 'CFO', 'prospect', 'meera.nair@lumenhealth.example', 'Webinar', [3, 4]],
   ['Kabir Malhotra', 'Copper & Co', 'Product Lead', 'inactive', 'kabir@copperco.example', 'Inbound', [1, 5]],
   ['Sneha Kapoor', 'Northwind Logistics', 'COO', 'customer', 'sneha.kapoor@northwind.example', 'Partner', [0, 6, 4]],
+  ['Rohan Desai', 'Helios Bank', 'CFO', 'prospect', 'rohan.desai@heliosbank.example', 'Conference', [0, 3, 4]],
+  ['Kavya Menon', 'Helios Bank', 'Head of IT Security', 'prospect', 'kavya.menon@heliosbank.example', 'Conference', [2, 5]],
+  ['Aditi Joshi', 'Tata Digital', 'Head of Data', 'active', 'aditi.joshi@tatadigital.example', 'Referral', [2, 6]],
+  ['Farhan Ali', 'Saffron Retail', 'Store Systems Manager', 'customer', 'farhan.ali@saffron.example', 'Referral', [5]],
 ];
 
 const PHONES = [
   '+91 98450 12873', '+91 99010 44521', '+91 98860 31094', '+91 97400 88216',
   '+91 98204 67390', '+91 99456 20718', '+91 98112 57463', '+91 97311 90542',
+  '+91 98867 40215', '+91 99723 11864', '', '+91 97422 50396',
 ];
+
+// deal index -> extra people on the deal: [contact, role]; the primary contact's role comes first.
+const STAKEHOLDERS = {
+  0: [[0, 'Decision maker'], [10, 'Champion']],
+  2: [[1, 'Champion'], [8, 'Decision maker'], [9, 'Technical']],
+  3: [[1, 'Champion'], [8, 'Finance']],
+  6: [[3, 'Decision maker'], [11, 'User']],
+};
 
 // [title, contact, value, stage, priority, closeInDays, daysInStage, createdDaysAgo, lostReason]
 const DEALS = [
@@ -86,6 +100,23 @@ const ACTIVITIES = [
   ['meeting', 7, null, 'Onboarding review', 'Walked the dispatch team through the new route optimiser dashboards.', 10, 45, 'Team trained'],
   ['email', 1, 3, 'Treasury pilot one-pager', 'Sent a one-page summary of the treasury dashboard pilot.', 5, null, ''],
   ['call', 3, null, 'Satisfaction check-in', 'Ananya is happy with support response times.', 12, 10, 'Happy with support'],
+  ['whatsapp', 9, 2, 'Sandbox access · WhatsApp', 'Hi Kavya, the sandbox credentials are on their way to your team. Shout if the VPN whitelist needs anything from us.', 1.1, null, 'Sent'],
+  ['whatsapp', 3, 6, 'Follow-up · WhatsApp', 'Hi Ananya, following up on Store analytics expansion. Is there anything you need from my side to move ahead?', 0.9, null, 'Sent'],
+];
+
+// Voice notes recorded on the move: [contact, deal, title, transcript, daysAgo, seconds]
+const VOICE_NOTES = [
+  [10, 0, 'Coffee with Aditi after the workshop', 'Coffee with Aditi after the workshop. She is pushing for the data platform internally and wants a reference call with another bank before Ravi signs. Send her the Helios case study.', 0.4, 38],
+];
+
+// Planned next steps: [type, contact, deal, title, description, daysFromToday, hour, minute]
+const NEXT_STEPS = [
+  ['task', 3, 6, 'Send revised volume pricing', 'Ananya asked for pricing at 60 and 100 outlets.', -1, 17, 0],
+  ['whatsapp', 5, 8, 'Check Meera has the case studies', '', 0, 16, 0],
+  ['call', 0, 0, 'Follow up on the security annex', 'Confirm the annex unblocks signature.', 1, 10, 0],
+  ['meeting', 1, 2, 'Present GTM deck to Helios leadership', 'Priya, Rohan and Kavya attending. Bring the integration timeline.', 2, 11, 30],
+  ['meeting', 7, 9, 'Renewal signing with Sneha', '', 5, 15, 0],
+  ['email', 8, 3, 'Send treasury pilot business case', 'Rohan wants the ROI model before the budget committee.', 9, 10, 0],
 ];
 
 // [contact, convertedDeal, rating, notes, orders: [description, amount, daysAgo, status]]
@@ -154,6 +185,7 @@ export function seedDemoData(clock) {
       id: `deal-${index + 1}`,
       title,
       contactId: contacts[contactIndex].id,
+      stakeholders: (STAKEHOLDERS[index] ?? [[contactIndex, '']]).map(([person, role]) => ({ contactId: contacts[person].id, role })),
       value,
       stage,
       priority,
@@ -173,6 +205,8 @@ export function seedDemoData(clock) {
     return {
       id: `activity-${index + 1}`,
       type,
+      status: 'done',
+      ...(type === 'whatsapp' ? { channel: 'whatsapp' } : {}),
       contactId: contacts[contactIndex].id,
       dealId: dealIndex == null ? null : deals[dealIndex].id,
       title,
@@ -183,6 +217,44 @@ export function seedDemoData(clock) {
       createdAt: date,
       updatedAt: date,
     };
+  });
+
+  VOICE_NOTES.forEach(([contactIndex, dealIndex, title, description, ago, seconds], index) => {
+    const date = iso(daysAgo(now, ago));
+    activities.push({
+      id: `voice-${index + 1}`,
+      type: 'note',
+      status: 'done',
+      source: 'voice',
+      durationSec: seconds,
+      contactId: contacts[contactIndex].id,
+      dealId: deals[dealIndex].id,
+      title,
+      description,
+      date,
+      duration: null,
+      outcome: '',
+      createdAt: date,
+      updatedAt: date,
+    });
+  });
+
+  NEXT_STEPS.forEach(([type, contactIndex, dealIndex, title, description, inDays, hour, minute], index) => {
+    const date = iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + inDays, hour, minute, 0, 0));
+    activities.push({
+      id: `step-${index + 1}`,
+      type,
+      status: 'planned',
+      contactId: contacts[contactIndex].id,
+      dealId: deals[dealIndex].id,
+      title,
+      description,
+      date,
+      duration: null,
+      outcome: '',
+      createdAt: iso(daysAgo(now, 1)),
+      updatedAt: iso(daysAgo(now, 1)),
+    });
   });
 
   const customers = [];
@@ -216,7 +288,8 @@ export function seedDemoData(clock) {
     });
   });
 
-  return {
+  let companyCount = 0;
+  return migrate({
     contacts,
     deals,
     activities,
@@ -225,5 +298,5 @@ export function seedDemoData(clock) {
     tags,
     settings: defaultSettings(),
     version: 1,
-  };
+  }, { now, id: () => `company-${++companyCount}` });
 }

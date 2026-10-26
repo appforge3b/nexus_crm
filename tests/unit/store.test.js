@@ -12,16 +12,16 @@ function setup(storageData) {
 }
 
 describe('Store persistence contract', () => {
-  it('uses the single localStorage key and the seven top-level collections', () => {
+  it('uses the single localStorage key and the top-level collections', () => {
     expect(STORAGE_KEY).toBe('nexus_data');
-    expect(COLLECTIONS).toEqual(['contacts', 'deals', 'activities', 'customers', 'orders', 'tags']);
+    expect(COLLECTIONS).toEqual(['contacts', 'companies', 'deals', 'activities', 'customers', 'orders', 'tags']);
   });
 
-  it('starts from empty collections, version 1, and default settings when nothing is stored', () => {
+  it('starts from empty collections, version 2, and default settings when nothing is stored', () => {
     const { store, storage } = setup();
     for (const name of COLLECTIONS) expect(store.getAll(name)).toEqual([]);
     const raw = JSON.parse(storage.getItem(STORAGE_KEY));
-    expect(raw.version).toBe(1);
+    expect(raw.version).toBe(2);
     expect(raw.settings.userName).toBe('there');
     expect(raw.settings.currency).toBe('₹');
     expect(raw.settings.stages.map((stage) => stage.id)).toEqual([
@@ -104,7 +104,7 @@ describe('Store persistence contract', () => {
     const contact = store.create('contacts', { name: 'Priya', status: 'active' });
     const json = store.exportAll();
     const parsed = JSON.parse(json);
-    expect(parsed.version).toBe(1);
+    expect(parsed.version).toBe(2);
     expect(parsed.contacts).toHaveLength(1);
 
     store.create('contacts', { name: 'Other', status: 'prospect' });
@@ -146,6 +146,28 @@ describe('Store persistence contract', () => {
     const corruptEmpty = memoryStorage({ [STORAGE_KEY]: '{' });
     const blank = new Store({ storage: corruptEmpty, clock, seed: false });
     expect(blank.getAll('contacts')).toEqual([]);
+  });
+
+  it('applies a batch of imported records in one write, and keeps nothing when storage is full', () => {
+    const { store, storage } = setup();
+    const kept = store.create('contacts', { name: 'Kept' });
+    const events = [];
+    store.subscribe((event) => events.push(event.type));
+    const ops = [
+      { op: 'upsert', collection: 'contacts', id: kept.id, data: { ...kept, title: 'CFO' } },
+      { op: 'upsert', collection: 'tags', id: 't1', data: { id: 't1', name: 'Enterprise', color: '#6366f1' } },
+    ];
+    store.applyChanges(ops);
+    expect(store.getById('contacts', kept.id).title).toBe('CFO');
+    expect(JSON.parse(storage.getItem(STORAGE_KEY)).tags).toHaveLength(1);
+    expect(events).toEqual(['import']);
+
+    const setItem = storage.setItem;
+    storage.setItem = () => { throw new DOMException('full', 'QuotaExceededError'); };
+    expect(() => store.applyChanges([{ op: 'upsert', collection: 'contacts', id: 'new', data: { id: 'new', name: 'Too many' } }])).toThrow(/out of storage space/);
+    storage.setItem = setItem;
+    expect(store.getAll('contacts').map((contact) => contact.name)).toEqual(['Kept']);
+    expect(events).toEqual(['import']);
   });
 
   it('resetDemo replaces the document with the demo seed', () => {

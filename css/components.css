@@ -3222,3 +3222,102 @@ th.num-col {
 .toast[data-tone="error"] .toast-icon { color: var(--danger); }
 .toast[data-tone="info"] { border-left-color: var(--accent-primary); }
 .toast[data-tone="info"] .toast-icon { color: var(--accent-soft); }
+
+/* ═══════════════════════════ Excel import ═══════════════════════════ */
+
+.excel-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.excel-block h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+.excel-block h3 svg { color: var(--success); }
+
+.excel-block p { margin: 0; }
+
+[data-modal-type="excel-import"] .modal-body > p:first-child { margin-top: 0; }
+
+.excel-summary {
+  width: 100%;
+  margin-bottom: 14px;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.excel-summary tbody tr:last-child > * { border-bottom: 0; }
+
+.excel-summary th,
+.excel-summary td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--glass-border);
+  text-align: right;
+}
+
+.excel-summary th:first-child { text-align: left; }
+
+.excel-summary thead th {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.excel-summary tbody th {
+  background: none;
+  color: var(--text-primary);
+  font-size: inherit;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.excel-problems { align-items: flex-start; }
+
+.excel-problems > svg { flex: none; margin-top: 2px; }
+
+.excel-problems ul {
+  max-height: 220px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+  overflow-y: auto;
+  font-size: 0.85rem;
+}
+
+.excel-problems li + li { margin-top: 4px; }
+
+.excel-problems p { margin: 8px 0 0; }
+
+.excel-where { font-weight: 600; white-space: nowrap; }
+
+.excel-warnings {
+  margin: 12px 0 0;
+  padding-left: 18px;
+}
+
+.excel-progress {
+  height: 8px;
+  margin: 14px 0 10px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.excel-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--emerald-gradient);
+  transition: width var(--transition-normal);
+}

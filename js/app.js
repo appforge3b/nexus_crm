@@ -5,8 +5,16 @@ import { debounce } from './debounce.js';
 import { renderOverlay, renderShell, renderView } from './views.js';
 import { moveDeal, confirmConversion, STAGE_PROBABILITY } from './deals.js';
 import { renameStage, stageLabel } from './settings.js';
+import { companyOf, ensureCompany, peopleAt, stakeholderEntries } from './companies.js';
+import { isPlanned, shiftDate, shortDate } from './agenda.js';
+import { mailtoLink, renderTemplate, templatesFrom, waLink } from './messaging.js';
+import { createDictation, formatClock, speechFactory as browserSpeech, suggestTitle } from './voice.js';
+import { SHEET_TYPES, composerContext, whenPreset } from './sheets.js';
+import { companyHint, localDateTime, plural } from './view-helpers.js';
+import { renderAccount, renderAccountMenu, renderSyncBanner } from './cloud-views.js';
 import {
   validateActivity,
+  validateCompany,
   validateContact,
   validateDeal,
   validateImport,
@@ -19,16 +27,19 @@ import {
   deleteDealMessage,
   importPreviewText,
 } from './copy.js';
-import { exportFilename, formatMoney, formatMoneyCompact } from './format.js';
+import { exportFilename, formatMoney, formatMoneyCompact, spreadsheetFilename } from './format.js';
+import { readXlsx, writeXlsx } from './xlsx.js';
+import { planSpreadsheetImport, workbookSheets } from './spreadsheet.js';
 import { icon } from './icons.js';
 import { esc } from './markup.js';
 import { DRAWERS, hideTooltip, mountChart } from './chart-render.js';
 import { burst, countUp, startParticleField } from './fx.js';
 
+const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const ANIMATE = typeof navigator !== 'undefined' && !/jsdom/i.test(navigator.userAgent || '');
 const TOAST_ICON = { success: 'bolt', error: 'warning', info: 'chronicle' };
 const cssValue = (value) => String(value).replace(/["\\]/g, '\\$&');
-const FOCUS_ATTRS = ['data-field', 'data-stage-id', 'data-tag-name', 'data-tag-color', 'data-move-stage', 'data-picker-for'];
+const FOCUS_ATTRS = ['data-field', 'data-stage-id', 'data-tag-name', 'data-tag-color', 'data-move-stage', 'data-picker-for', 'data-template-name', 'data-template-body', 'data-stakeholder-role', 'data-cloud-field', 'data-member-role'];
 
 let stopPrevious = () => {};
 
@@ -36,8 +47,21 @@ function emptyFilters() {
   return { search: '', minValue: '', maxValue: '', priorities: [], createdFrom: '', createdTo: '' };
 }
 
-export function createApp({ root, storage, clock, seed = false, storageKey = 'nexus_data', demoMode = seed }) {
-  const store = new Store({ storage, clock, seed, storageKey });
+export function createApp({
+  root,
+  storage,
+  clock,
+  seed = false,
+  storageKey = 'nexus_data',
+  demoMode = seed,
+  openUrl = null,
+  speechFactory = undefined,
+  clipboard = undefined,
+  store: providedStore = null,
+  cloud = null,
+}) {
+  const store = providedStore ?? new Store({ storage, clock, seed, storageKey });
+  if (cloud) demoMode = false;
   const ui = {
     collapsed: false,
     menuOpen: false,
@@ -52,8 +76,10 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     rosterQuery: '',
     rosterDraft: '',
     rosterStatus: 'all',
+    rosterMode: 'people',
     customerQuery: '',
     chronicleType: 'all',
+    chronicleStatus: 'all',
     chronicleLimit: 20,
     chronicleFrom: '',
     chronicleTo: '',
@@ -80,6 +106,12 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
   let suppressClick = false;
   let drag = null;
   let touch = null;
+  let todayObserver = null;
+  let lastChronicleKey = '';
+  let pendingCall = null;
+  let dictation = null;
+  let voiceTimer = 0;
+  let wakeLock = null;
   const counts = new Map();
   const chartSigs = new Map();
   const revealed = new Set();
@@ -110,14 +142,16 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     return {
       route: parseRoute(window.location.hash),
       now: now(),
-      settings: store.getSettings(),
+      settings: cloud ? { ...store.getSettings(), userName: cloud.firstName() } : store.getSettings(),
       contacts: store.getAll('contacts'),
+      companies: store.getAll('companies'),
       deals: store.getAll('deals'),
       activities: store.getAll('activities'),
       customers,
       orders: store.getAll('orders'),
       tags: store.getAll('tags'),
       ui,
+      cloud: cloud ? cloud.view() : null,
     };
   }
 
@@ -135,14 +169,49 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
         stopParticles = startParticleField(root.querySelector('[data-particle-field]'));
       }
     }
+    if (dictation && !(ui.modal?.type === 'voice' && ui.modal.phase === 'recording')) endDictation();
+    cloud?.onRoute(ctx.route.view);
     updateShell(ctx);
     const viewChanged = renderMain(ctx);
     renderOverlayLayer(ctx);
     syncToasts();
     root.querySelector('.fx-layer')?.toggleAttribute('data-celebration', Boolean(ui.celebrate));
     restoreFocus(focus);
+    anchorChronicle(ctx, viewChanged);
     bindSentinel();
     enhance(viewChanged);
+  }
+
+  /* Upcoming steps sit above the Today anchor, history below it, so the Chronicle opens scrolled to Today. */
+  function anchorChronicle(ctx, viewChanged) {
+    todayObserver?.disconnect();
+    todayObserver = null;
+    if (ctx.route.view !== 'chronicle') {
+      lastChronicleKey = '';
+      return;
+    }
+    const key = `${window.location.hash}|${ui.chronicleType}|${ui.chronicleStatus}|${ui.chronicleFrom}|${ui.chronicleTo}`;
+    if (viewChanged || key !== lastChronicleKey) scrollToToday('auto');
+    lastChronicleKey = key;
+    const anchor = currentView()?.querySelector('[data-today-anchor]');
+    const jump = currentView()?.querySelector('.jump-today');
+    if (!anchor || !jump || typeof IntersectionObserver !== 'function') return;
+    todayObserver = new IntersectionObserver((entries) => {
+      const entry = entries.find((item) => item.target === anchor);
+      if (!entry) return;
+      const above = (entry.boundingClientRect?.top ?? 0) < 0;
+      jump.dataset.visible = entry.isIntersecting ? 'false' : 'true';
+      jump.dataset.direction = above ? 'up' : 'down';
+      jump.innerHTML = `${icon(above ? 'arrow-up' : 'arrow-down', 14)}<span>Today</span>`;
+    });
+    todayObserver.observe(anchor);
+  }
+
+  function scrollToToday(behavior = 'smooth') {
+    const anchor = currentView()?.querySelector('[data-today-anchor]');
+    if (!anchor || !ANIMATE) return;
+    const offset = window.matchMedia?.('(max-width: 767px)').matches ? 72 : 24;
+    window.scrollTo({ top: Math.max(0, anchor.getBoundingClientRect().top + window.scrollY - offset), behavior });
   }
 
   function updateShell(ctx) {
@@ -158,6 +227,21 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
         if (id === ctx.route.view) link.setAttribute('aria-current', 'page');
         else link.removeAttribute('aria-current');
       });
+    }
+    if (ctx.cloud) {
+      paintSlot(root.querySelector('[data-account]'), renderAccount(ctx.cloud));
+      paintSlot(root.querySelector('[data-account-menu]'), renderAccountMenu(ctx.cloud));
+      const banner = root.querySelector('[data-sync-banner]');
+      const html = renderSyncBanner(ctx.cloud.status);
+      paintSlot(banner, html);
+      banner.hidden = !html;
+    }
+  }
+
+  function paintSlot(el, html) {
+    if (el && el.dataset.html !== html) {
+      el.innerHTML = html;
+      el.dataset.html = html;
     }
   }
 
@@ -307,6 +391,7 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
       template.innerHTML = `<div class="toast" role="status" data-tone="${toast.tone}" data-toast="${toast.id}">
         <span class="toast-icon">${icon(TOAST_ICON[toast.tone] || 'bolt', 16)}</span>
         <span class="toast-msg">${esc(toast.message)}</span>
+        ${toast.action ? `<button type="button" class="toast-action" data-action="toast-action" data-toast-id="${toast.id}">${esc(toast.action.label)}</button>` : ''}
         <button type="button" class="icon-btn tiny" aria-label="Dismiss" data-action="dismiss-toast" data-toast-id="${toast.id}">${icon('close', 14)}</button>
       </div>`.trim();
       host.append(template.content.firstElementChild);
@@ -332,7 +417,7 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     timelineObserver = new IntersectionObserver((entries) => {
       if (!entries.some((entry) => entry.isIntersecting)) return;
       const view = currentView();
-      const total = view ? view.querySelectorAll('[data-activity-id]').length : 0;
+      const total = view ? view.querySelectorAll('[data-stream="done"]').length : 0;
       if (total < ui.chronicleLimit) return;
       ui.chronicleLimit += 20;
       render();
@@ -420,13 +505,13 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     render();
   }
 
-  function pushToast(tone, message) {
+  function pushToast(tone, message, action = null) {
     const id = crypto.randomUUID();
-    const item = { id, tone, message, timer: 0 };
+    const item = { id, tone, message, timer: 0, action };
     item.timer = setTimeout(() => {
       ui.toasts = ui.toasts.filter((toast) => toast.id !== id);
       render();
-    }, 3000);
+    }, action ? 6000 : 3000);
     ui.toasts.push(item);
     if (ui.toasts.length > 4) {
       const dropped = ui.toasts.shift();
@@ -449,6 +534,7 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
       render();
       return;
     }
+    if (ui.modal?.busy) return;
     if (ui.modal || ui.celebrate) {
       if (ui.modal?.type === 'convert') confirmConversion(store, ui.modal.dealId, false, { now: now() });
       ui.modal = null;
@@ -462,7 +548,7 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
       return;
     }
     const route = parseRoute(window.location.hash);
-    if (route.params.deal || route.params.contact) go(`#/${route.view}`);
+    if (route.params.deal || route.params.contact || route.params.company) go(`#/${route.view}`);
   }
 
   function showFieldErrors(scope, errors) {
@@ -492,13 +578,37 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
 
   function routePreset() {
     const route = parseRoute(window.location.hash);
-    return { contactId: route.params.contact || '', dealId: route.params.deal || '' };
+    return { contactId: route.params.contact || '', dealId: route.params.deal || '', companyId: route.params.company || '' };
+  }
+
+  function refsOf(el) {
+    const refs = { contactId: el.dataset.contactRef || '', dealId: el.dataset.dealRef || '', companyId: el.dataset.companyRef || '' };
+    return refs.contactId || refs.dealId || refs.companyId ? refs : routePreset();
+  }
+
+  /** Fills in the contact for a deal or company reference: the deal's primary, else the first person at the company. */
+  function resolveRefs({ contactId = '', dealId = '', companyId = '' } = {}) {
+    const deal = dealId ? store.getById('deals', dealId) : null;
+    if (!contactId && deal) contactId = deal.contactId;
+    if (!contactId && companyId) {
+      const company = store.getById('companies', companyId);
+      contactId = peopleAt(company, store.getAll('contacts'), store.getAll('companies'))[0]?.id || '';
+    }
+    return { contactId, dealId: deal ? dealId : '', companyId };
+  }
+
+  /** The newest open deal a contact is involved in, used when a message or note needs a deal context. */
+  function openDealFor(contactId) {
+    if (!contactId) return '';
+    const active = ['prospect', 'qualified', 'proposal', 'negotiation', 'closing'];
+    const deals = store.query('deals', (deal) => active.includes(deal.stage)
+      && stakeholderEntries(deal).some((entry) => entry.contactId === contactId));
+    return deals.sort((a, b) => new Date(b.stageChangedAt || b.createdAt) - new Date(a.stageChangedAt || a.createdAt))[0]?.id || '';
   }
 
   function openActivity(type, preset = routePreset()) {
-    let { contactId, dealId } = preset;
-    if (dealId && !contactId) contactId = store.getById('deals', dealId)?.contactId || '';
-    openModal({ type: 'activity', activityType: type || 'call', preset: { contactId: contactId || '', dealId: dealId || '' } });
+    const { contactId, dealId } = resolveRefs(preset);
+    openModal({ type: 'activity', activityType: type || 'call', preset: { ...preset, contactId: contactId || '', dealId: dealId || '' } });
     render();
   }
 
@@ -556,7 +666,9 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
       else ask();
       return;
     }
-    const customer = store.query('customers', (item) => item.contactId === deal.contactId)[0];
+    const companyId = deal.companyId || companyIdFor(deal.contactId);
+    const customer = store.query('customers', (item) => item.contactId === deal.contactId)[0]
+      || (companyId ? store.query('customers', (item) => (item.companyId || companyIdFor(item.contactId)) === companyId)[0] : null);
     if (customer) {
       store.create('orders', {
         customerId: customer.id,
@@ -587,6 +699,7 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
       return;
     }
     const target = event.target;
+    if (cloud && !target.closest?.('[data-account], [data-account-menu]') && cloud.closeMenus()) render();
     if (target?.hasAttribute?.('data-overlay')) {
       closeTop();
       return;
@@ -603,13 +716,37 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     }
     const actionEl = target.closest('[data-action]');
     if (actionEl) {
-      handleAction(actionEl);
+      handleAction(actionEl, event);
       return;
     }
     const linked = target.closest('[data-link]');
     if (linked) {
       if (linked.dataset.link === 'contact') go(`#/roster?contact=${linked.dataset.id}`);
       if (linked.dataset.link === 'deal') go(`#/pipeline?deal=${linked.dataset.id}`);
+      if (linked.dataset.link === 'company') {
+        ui.rosterMode = 'companies';
+        go(`#/roster?company=${linked.dataset.id}`);
+      }
+      return;
+    }
+    const rosterMode = target.closest('[data-roster-mode]');
+    if (rosterMode) {
+      ui.rosterMode = rosterMode.dataset.rosterMode;
+      const route = parseRoute(window.location.hash);
+      if (route.params.contact || route.params.company) go('#/roster');
+      else render();
+      return;
+    }
+    const chronStatus = target.closest('[data-chron-status]');
+    if (chronStatus) {
+      ui.chronicleStatus = chronStatus.dataset.chronStatus;
+      ui.chronicleLimit = 20;
+      render();
+      return;
+    }
+    const companyCard = target.closest('.company-card[data-company-id]');
+    if (companyCard && !target.closest('button, a')) {
+      go(`#/roster?company=${companyCard.dataset.companyId}`);
       return;
     }
     const filterType = target.closest('[data-filter-type]');
@@ -682,13 +819,139 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     }
   }
 
-  function handleAction(el) {
+  function handleAction(el, event) {
     const action = el.dataset.action;
     const dialog = root.querySelector('.overlay-host [role="dialog"]');
+    if (el.getAttribute('aria-disabled') === 'true') {
+      event?.preventDefault();
+      return;
+    }
+    if (cloud?.handleAction(action, el)) return;
     switch (action) {
+      case 'toast-action': {
+        const toast = ui.toasts.find((item) => item.id === el.dataset.toastId);
+        clearTimeout(toast?.timer);
+        ui.toasts = ui.toasts.filter((item) => item.id !== el.dataset.toastId);
+        toast?.action?.run();
+        render();
+        return;
+      }
+      case 'new-company':
+        openModal({ type: 'company' });
+        render();
+        return;
+      case 'edit-company':
+        openModal({ type: 'company', id: el.dataset.id });
+        render();
+        return;
+      case 'add-stakeholder': return addStakeholder(el);
+      case 'remove-stakeholder': return removeStakeholder(el.dataset.dealRef, el.dataset.contactRef);
+      case 'make-primary': return makePrimary(el.dataset.dealRef, el.dataset.contactRef);
+      case 'plan-step': return openPlan(refsOf(el));
+      case 'step-done': return openComplete(el.dataset.id);
+      case 'reschedule': return reschedule(el.dataset.id, Number(el.dataset.days) || 1);
+      case 'pick-title': {
+        const input = dialog?.querySelector('[data-field="title"]');
+        if (!input) return;
+        input.value = el.dataset.title;
+        rememberDraft('title', input.value);
+        clearFieldError(dialog, 'title');
+        input.focus({ preventScroll: true });
+        return;
+      }
+      case 'pick-when': {
+        const input = dialog?.querySelector('[data-field="date"]');
+        if (!input) return;
+        input.value = localDateTime(whenPreset(el.dataset.when, now()));
+        rememberDraft('date', input.value);
+        clearFieldError(dialog, 'date');
+        dialog.querySelectorAll('[data-action="pick-when"]').forEach((chip) => chip.classList.toggle('is-on', chip === el));
+        return;
+      }
+      case 'pick-contact': {
+        const select = dialog?.querySelector('[data-field="contact"]');
+        if (!select) return;
+        select.value = el.dataset.contactRef;
+        rememberDraft('contact', select.value);
+        syncDealOptions(dialog);
+        clearFieldError(dialog, 'contact');
+        return;
+      }
+      case 'jump-today':
+        scrollToToday('smooth');
+        return;
+      case 'scroll-upcoming': {
+        const top = currentView()?.querySelector('[data-upcoming-top]');
+        if (top && ANIMATE) window.scrollTo({ top: Math.max(0, top.getBoundingClientRect().top + window.scrollY - 24), behavior: 'smooth' });
+        return;
+      }
+      case 'compose': return openComposer(refsOf(el));
+      case 'pick-recipient':
+        if (!ui.modal) return;
+        ui.modal.contactId = el.dataset.contactRef;
+        render();
+        return;
+      case 'pick-template': return applyTemplate(el.dataset.templateId);
+      case 'send-whatsapp': return sendMessage('whatsapp', el, event);
+      case 'send-email': return sendMessage('email', el, event);
+      case 'copy-message': {
+        const text = composedText();
+        if (!text) return;
+        copyText(text, 'Message copied');
+        return;
+      }
+      case 'call-sheet': return openCall(el);
+      case 'call-change':
+        if (!ui.modal) return;
+        ui.modal.contactId = '';
+        render();
+        return;
+      case 'call-via': return callVia(el, event);
+      case 'copy-number': {
+        const contact = store.getById('contacts', el.dataset.contactRef);
+        if (contact?.phone) copyText(contact.phone, 'Number copied');
+        return;
+      }
+      case 'log-past-call': {
+        const { contactId, dealId } = ui.modal || {};
+        ui.modal = null;
+        openActivity('call', { contactId, dealId });
+        return;
+      }
+      case 'voice-note': return openVoice(refsOf(el));
+      case 'voice-toggle':
+        if (!dictation) return;
+        if (dictation.state === 'listening') dictation.pause();
+        else dictation.start();
+        return;
+      case 'voice-stop': return finishRecording();
+      case 'voice-resume': return resumeRecording();
+      case 'add-template': {
+        const templates = editableTemplates();
+        templates.push({ id: crypto.randomUUID(), name: 'New template', body: 'Hi {firstName}, ' });
+        store.updateSettings({ templates });
+        root.querySelector(`[data-template-name="${templates.length - 1}"]`)?.focus();
+        return;
+      }
+      case 'delete-template': {
+        const templates = editableTemplates().filter((_, index) => index !== Number(el.dataset.index));
+        if (!templates.length) {
+          pushToast('error', 'Keep at least one template');
+          render();
+          return;
+        }
+        store.updateSettings({ templates });
+        return;
+      }
+      case 'reset-templates':
+        store.updateSettings({ templates: [] });
+        pushToast('success', 'Templates restored');
+        render();
+        return;
       case 'save-modal': return saveModal();
       case 'cancel-modal':
       case 'convert-no':
+        if (ui.modal?.busy) return;
         if (ui.modal?.type === 'convert') confirmConversion(store, ui.modal.dealId, false, { now: now() });
         ui.modal = null;
         ui.help = false;
@@ -739,7 +1002,7 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
         newForView();
         return;
       case 'new-contact':
-        openModal({ type: 'contact' });
+        openModal({ type: 'contact', preset: { company: el.dataset.companyName || '' } });
         render();
         return;
       case 'new-deal':
@@ -758,10 +1021,12 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
         openModal({ type: 'contact', id: el.dataset.id });
         render();
         return;
-      case 'edit-activity':
-        openModal({ type: 'activity', id: el.dataset.id });
+      case 'edit-activity': {
+        const activity = store.getById('activities', el.dataset.id);
+        openModal(activity && isPlanned(activity) ? { type: 'plan', id: activity.id, draft: {} } : { type: 'activity', id: el.dataset.id });
         render();
         return;
+      }
       case 'quick-log':
         openActivity(el.dataset.log);
         return;
@@ -815,9 +1080,21 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
       case 'delete': return askDelete(el.dataset.kind, el.dataset.id);
       case 'add-tag': return addTag();
       case 'export': return exportBackup();
+      case 'excel-template': return downloadWorkbook({ blank: true });
+      case 'excel-export': return downloadWorkbook({ blank: false });
+      case 'apply-excel': return applyWorkbook();
       case 'replace-import': {
         const json = ui.importJson;
         ui.modal = null;
+        if (cloud) {
+          pushToast('info', 'Importing your backup…');
+          render();
+          cloud.importDocument(json).then(
+            () => pushToast('success', 'Backup imported for the whole team'),
+            (error) => pushToast('error', error.message || 'Import failed'),
+          ).finally(render);
+          return;
+        }
         store.importAll(json);
         pushToast('success', 'Backup imported');
         render();
@@ -845,9 +1122,21 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
           onYes: () => {
             ui.confirm = {
               title: 'Really erase everything?',
-              message: 'Are you sure? This will erase every contact, deal, and note.',
+              message: cloud
+                ? `Are you sure? This erases every contact, deal, and note in ${cloud.state.me.tenant.name} for the whole team.`
+                : 'Are you sure? This will erase every contact, deal, and note.',
               yes: 'Clear data',
               onYes: () => {
+                if (cloud) {
+                  ui.confirm = null;
+                  ui.selectedCustomerId = null;
+                  render();
+                  cloud.clearAll().then(
+                    () => pushToast('info', 'All data cleared'),
+                    (error) => pushToast('error', error.message || 'Could not clear the data'),
+                  ).finally(render);
+                  return;
+                }
                 store.clearAll();
                 ui.selectedCustomerId = null;
                 ui.confirm = null;
@@ -881,21 +1170,57 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
       };
     } else if (kind === 'contact') {
       const contact = store.getById('contacts', id);
-      const dealCount = store.query('deals', (deal) => deal.contactId === id).length;
+      const companies = store.getAll('companies');
+      const colleague = peopleAt(companyOf(contact, companies), store.getAll('contacts'), companies).find((person) => person.id !== id);
+      const successor = (deal) => stakeholderEntries(deal).find((entry) => entry.contactId !== id)?.contactId;
+      const orphaned = store.query('deals', (deal) => deal.contactId === id && !successor(deal));
       ui.confirm = {
         title: 'Delete contact?',
-        message: deleteContactMessage(contact?.name || 'this contact', dealCount),
+        message: deleteContactMessage(contact?.name || 'this contact', orphaned.length),
         yes: 'Delete',
         onYes: () => {
-          for (const deal of store.query('deals', (item) => item.contactId === id)) store.delete('deals', deal.id);
+          for (const deal of store.query('deals', (item) => stakeholderEntries(item).some((entry) => entry.contactId === id))) {
+            const next = successor(deal);
+            if (!next) {
+              store.delete('deals', deal.id);
+              continue;
+            }
+            store.update('deals', deal.id, {
+              contactId: deal.contactId === id ? next : deal.contactId,
+              stakeholders: stakeholderEntries(deal).filter((entry) => entry.contactId !== id).map(({ contactId, role }) => ({ contactId, role })),
+            });
+          }
           for (const activity of store.query('activities', (item) => item.contactId === id)) store.delete('activities', activity.id);
           for (const customer of store.query('customers', (item) => item.contactId === id)) {
+            if (colleague) {
+              store.update('customers', customer.id, { contactId: colleague.id });
+              continue;
+            }
             for (const order of store.query('orders', (item) => item.customerId === customer.id)) store.delete('orders', order.id);
             store.delete('customers', customer.id);
           }
           store.delete('contacts', id);
           ui.confirm = null;
           pushToast('success', 'Contact deleted');
+          go('#/roster');
+        },
+      };
+    } else if (kind === 'company') {
+      const company = store.getById('companies', id);
+      const companies = store.getAll('companies');
+      const people = peopleAt(company, store.getAll('contacts'), companies);
+      ui.confirm = {
+        title: 'Delete company?',
+        message: `Delete ${company?.name || 'this company'}?${people.length ? ` ${people.length === 1 ? 'Its 1 person stays' : `Its ${people.length} people stay`} in your Roster without a company.` : ''} Deals and history are kept.`,
+        yes: 'Delete',
+        onYes: () => {
+          for (const person of people) store.update('contacts', person.id, { companyId: null, company: '' });
+          for (const collection of ['deals', 'customers', 'activities']) {
+            for (const item of store.query(collection, (record) => record.companyId === id)) store.update(collection, item.id, { companyId: null });
+          }
+          store.delete('companies', id);
+          ui.confirm = null;
+          pushToast('success', 'Company deleted');
           go('#/roster');
         },
       };
@@ -951,12 +1276,44 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
       const result = validateContact(data, { tags: store.getAll('tags') });
       if (!result.ok) return showFieldErrors(dialog, result.errors);
       ui.modal = null;
+      data.companyId = ensureCompany(store, data.company);
+      data.company = data.companyId ? store.getById('companies', data.companyId).name : '';
       if (existing) store.update('contacts', existing.id, data);
       else store.create('contacts', data);
       pushToast('success', existing ? 'Contact updated' : 'Contact saved');
       render();
       return;
     }
+    if (modal.type === 'company') {
+      const existing = modal.id ? store.getById('companies', modal.id) : null;
+      const data = {
+        name: read(dialog, 'name').trim().replace(/\s+/g, ' '),
+        industry: read(dialog, 'industry').trim(),
+        website: read(dialog, 'website').trim(),
+        notes: read(dialog, 'notes'),
+      };
+      const others = store.query('companies', (company) => company.id !== existing?.id);
+      const result = validateCompany(data, { companies: others });
+      if (!result.ok) return showFieldErrors(dialog, result.errors);
+      ui.modal = null;
+      if (existing) {
+        store.update('companies', existing.id, data);
+        if (existing.name !== data.name) {
+          for (const person of store.query('contacts', (contact) => contact.companyId === existing.id)) store.update('contacts', person.id, { company: data.name });
+        }
+        pushToast('success', 'Company updated');
+        render();
+        return;
+      }
+      const company = store.create('companies', data);
+      ui.rosterMode = 'companies';
+      pushToast('success', `${company.name} added`);
+      go(`#/roster?company=${company.id}`);
+      return;
+    }
+    if (modal.type === 'plan') return savePlan(dialog, modal);
+    if (modal.type === 'complete') return saveComplete(dialog, modal);
+    if (modal.type === 'voice') return saveVoiceNote(dialog, modal);
     if (modal.type === 'deal') {
       const existing = modal.id ? store.getById('deals', modal.id) : null;
       const stage = read(dialog, 'stage') || 'prospect';
@@ -977,6 +1334,7 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
         )));
       }
       ui.modal = null;
+      Object.assign(data, dealPeople(dialog, data.contactId, existing));
       if (existing) {
         const probability = rawProbability === '' ? existing.probability : Math.min(100, Math.max(0, Number(rawProbability)));
         const lostReason = dialog.querySelector('[data-field="lostReason"]') ? read(dialog, 'lostReason').trim() : existing.lostReason;
@@ -1003,8 +1361,10 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
       const duration = read(dialog, 'duration');
       const rawDate = read(dialog, 'date');
       const parsed = rawDate ? new Date(rawDate) : null;
+      const type = existing?.type || modal.activityType || 'call';
       const data = {
-        type: existing?.type || modal.activityType || 'call',
+        type,
+        status: existing?.status || 'done',
         contactId: read(dialog, 'contact'),
         dealId: read(dialog, 'deal') || null,
         title: read(dialog, 'title').trim(),
@@ -1013,9 +1373,12 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
         duration: duration === '' ? null : Number(duration),
         outcome: read(dialog, 'outcome'),
       };
+      if (dialog.querySelector('[data-field="channel"]')) data.channel = read(dialog, 'channel');
+      else if (type === 'whatsapp') data.channel = 'whatsapp';
       const result = validateActivity(data, { contacts: store.getAll('contacts'), deals: store.getAll('deals') });
       if (!result.ok) return showFieldErrors(dialog, result.errors);
       ui.modal = null;
+      data.companyId = companyOf(store.getById('contacts', data.contactId), store.getAll('companies'))?.id ?? null;
       if (existing) store.update('activities', existing.id, data);
       else store.create('activities', data);
       pushToast('success', existing ? 'Activity updated' : 'Activity logged');
@@ -1056,6 +1419,511 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     }
   }
 
+  function companyIdFor(contactId) {
+    return companyOf(store.getById('contacts', contactId), store.getAll('companies'))?.id ?? null;
+  }
+
+  function firstName(contactId) {
+    return store.getById('contacts', contactId)?.name.split(' ')[0] || 'them';
+  }
+
+  function rememberDraft(name, value) {
+    if (ui.modal?.draft) ui.modal.draft[name] = value;
+  }
+
+  /* ───────────── stakeholders ───────────── */
+
+  /** Primary contact plus ticked colleagues; stakeholders from other companies (not shown as boxes) are kept. */
+  function dealPeople(dialog, primaryId, existing) {
+    const previous = existing ? stakeholderEntries(existing) : [];
+    const roles = new Map(previous.map((entry) => [entry.contactId, entry.role]));
+    const boxes = [...dialog.querySelectorAll('[data-stakeholder-option]')].filter((box) => !box.closest('[hidden]'));
+    const shown = new Map(boxes.map((box) => [box.value, box.checked]));
+    const ids = [primaryId];
+    for (const entry of previous) if (!shown.has(entry.contactId) || shown.get(entry.contactId)) ids.push(entry.contactId);
+    for (const [id, checked] of shown) if (checked) ids.push(id);
+    const unique = [...new Set(ids)].filter((id) => id && store.getById('contacts', id));
+    return {
+      companyId: companyIdFor(primaryId),
+      stakeholders: unique.map((contactId) => ({ contactId, role: roles.get(contactId) || '' })),
+    };
+  }
+
+  function plainEntries(deal) {
+    return stakeholderEntries(deal).map(({ contactId, role }) => ({ contactId, role }));
+  }
+
+  function addStakeholder(el) {
+    const scope = el.closest('[data-region], [data-panel]') || root;
+    const contactId = scope.querySelector('[data-field="addStakeholder"]')?.value || '';
+    const role = scope.querySelector('[data-field="addStakeholderRole"]')?.value || '';
+    const deal = store.getById('deals', el.dataset.dealRef);
+    if (!deal) return;
+    if (!contactId) {
+      pushToast('error', 'Pick someone to add first');
+      render();
+      return;
+    }
+    const entries = plainEntries(deal);
+    if (!entries.some((entry) => entry.contactId === contactId)) {
+      store.update('deals', deal.id, { stakeholders: [...entries, { contactId, role }] });
+    }
+    pushToast('success', `${store.getById('contacts', contactId)?.name || 'They'} added to ${deal.title}`);
+    render();
+  }
+
+  function removeStakeholder(dealId, contactId) {
+    const deal = store.getById('deals', dealId);
+    if (!deal || deal.contactId === contactId) return;
+    const before = plainEntries(deal);
+    store.update('deals', dealId, { stakeholders: before.filter((entry) => entry.contactId !== contactId) });
+    pushToast('info', `${store.getById('contacts', contactId)?.name || 'Person'} removed from the deal`, {
+      label: 'Undo',
+      run: () => store.update('deals', dealId, { stakeholders: before }),
+    });
+    render();
+  }
+
+  function makePrimary(dealId, contactId) {
+    const deal = store.getById('deals', dealId);
+    if (!deal || deal.contactId === contactId) return;
+    store.update('deals', dealId, { contactId, stakeholders: plainEntries(deal), companyId: companyIdFor(contactId) || deal.companyId || null });
+    pushToast('success', `${store.getById('contacts', contactId)?.name} is now the main contact`);
+    render();
+  }
+
+  function setStakeholderRole(dealId, contactId, role) {
+    const deal = store.getById('deals', dealId);
+    if (!deal) return;
+    store.update('deals', dealId, { stakeholders: plainEntries(deal).map((entry) => (entry.contactId === contactId ? { ...entry, role } : entry)) });
+  }
+
+  function syncStakeholderOptions(dialog) {
+    const field = dialog.querySelector('[data-stakeholder-field]');
+    const select = dialog.querySelector('[data-field="contact"]');
+    if (!field || !select) return;
+    const company = select.selectedOptions[0]?.dataset.company || '';
+    let any = false;
+    field.querySelectorAll('[data-person]').forEach((label) => {
+      const show = Boolean(company) && label.dataset.personCompany === company && label.dataset.person !== select.value;
+      label.hidden = !show;
+      any ||= show;
+    });
+    field.hidden = !any;
+  }
+
+  /* ───────────── next steps ───────────── */
+
+  function openPlan(refs, preset = {}) {
+    const { contactId, dealId } = resolveRefs(refs);
+    openModal({ type: 'plan', preset: { contactId, dealId: dealId || openDealFor(contactId), ...preset }, draft: {} });
+    render();
+  }
+
+  function parseDate(dialog) {
+    const raw = read(dialog, 'date');
+    const parsed = raw ? new Date(raw) : null;
+    return parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : '';
+  }
+
+  function savePlan(dialog, modal) {
+    const existing = modal.id ? store.getById('activities', modal.id) : null;
+    const data = {
+      type: dialog.querySelector('[data-plan-type]:checked')?.value || 'meeting',
+      status: 'planned',
+      contactId: read(dialog, 'contact'),
+      dealId: read(dialog, 'deal') || null,
+      title: read(dialog, 'title').trim(),
+      description: read(dialog, 'description'),
+      date: parseDate(dialog),
+      duration: existing?.duration ?? null,
+      outcome: existing?.outcome || '',
+    };
+    const result = validateActivity(data, { contacts: store.getAll('contacts'), deals: store.getAll('deals') });
+    if (!result.ok) return showFieldErrors(dialog, result.errors);
+    ui.modal = null;
+    data.companyId = companyIdFor(data.contactId);
+    if (existing) store.update('activities', existing.id, data);
+    else store.create('activities', data);
+    pushToast('success', existing ? 'Next step updated' : `Planned for ${shortDate(data.date)} with ${firstName(data.contactId)}`);
+    render();
+  }
+
+  function openComplete(id) {
+    if (!store.getById('activities', id)) return;
+    openModal({ type: 'complete', id, draft: {} });
+    render();
+  }
+
+  function saveComplete(dialog, modal) {
+    const step = store.getById('activities', modal.id);
+    if (!step) return;
+    const date = parseDate(dialog);
+    if (!date) return showFieldErrors(dialog, [{ field: 'date', message: 'Date is required' }]);
+    const update = {
+      status: 'done',
+      completedAt: now().toISOString(),
+      date,
+      outcome: read(dialog, 'outcome').trim(),
+      description: read(dialog, 'description'),
+    };
+    if (dialog.querySelector('[data-field="duration"]')) {
+      const duration = read(dialog, 'duration');
+      update.duration = duration === '' ? null : Math.max(0, Number(duration));
+    }
+    const planNext = dialog.querySelector('[data-field="planNext"]')?.checked;
+    store.update('activities', step.id, update);
+    pushToast('success', `“${step.title}” done`, {
+      label: 'Undo',
+      run: () => store.update('activities', step.id, {
+        status: 'planned', completedAt: null, date: step.date, outcome: step.outcome || '', description: step.description || '', duration: step.duration ?? null,
+      }),
+    });
+    if (planNext) {
+      openPlan({ contactId: step.contactId, dealId: step.dealId || '' });
+      return;
+    }
+    ui.modal = null;
+    render();
+  }
+
+  function reschedule(id, days) {
+    const step = store.getById('activities', id);
+    if (!step) return;
+    const current = new Date(step.date);
+    const today = now();
+    const base = current < today
+      ? new Date(today.getFullYear(), today.getMonth(), today.getDate(), current.getHours(), current.getMinutes())
+      : current;
+    const next = shiftDate(base.toISOString(), days);
+    store.update('activities', id, { date: next.toISOString() });
+    pushToast('info', `Moved to ${shortDate(next)}`, { label: 'Undo', run: () => store.update('activities', id, { date: step.date }) });
+    render();
+  }
+
+  /* ───────────── messaging ───────────── */
+
+  function openComposer(refs) {
+    const { contactId, dealId, companyId } = resolveRefs(refs);
+    openModal({ type: 'message', contactId, dealId: dealId || openDealFor(contactId), companyId, text: '', templateId: '' });
+    render();
+  }
+
+  function editableTemplates() {
+    return templatesFrom(store.getSettings()).map((template) => ({ ...template }));
+  }
+
+  function applyTemplate(id) {
+    const template = templatesFrom(store.getSettings()).find((item) => item.id === id);
+    if (!template || !ui.modal) return;
+    ui.modal.text = renderTemplate(template.body, composerContext(context()).vars);
+    ui.modal.templateId = id;
+    render();
+    const area = root.querySelector('.overlay-host [data-field="message"]');
+    area?.focus({ preventScroll: true });
+    area?.setSelectionRange?.(area.value.length, area.value.length);
+  }
+
+  function composedText() {
+    if (ui.modal?.type !== 'message') return '';
+    return renderTemplate(ui.modal.text || '', composerContext(context()).vars).trim();
+  }
+
+  /** Keeps the preview, counter and send links live while typing, without re-rendering the sheet. */
+  function updateComposer(dialog) {
+    const text = composedText();
+    const preview = dialog.querySelector('[data-preview]');
+    if (preview) {
+      preview.hidden = !text;
+      preview.querySelector('[data-preview-text]').textContent = text;
+    }
+    const count = dialog.querySelector('[data-char-count]');
+    if (count) count.textContent = `${text.length} characters`;
+    const off = !text || !ui.modal.contactId;
+    dialog.querySelector('[data-action="copy-message"]')?.toggleAttribute('disabled', off);
+    dialog.querySelectorAll('a[data-action="send-whatsapp"], a[data-action="send-email"]').forEach((link) => link.setAttribute('aria-disabled', off ? 'true' : 'false'));
+  }
+
+  function sendMessage(channel, el, event) {
+    const modal = ui.modal;
+    if (modal?.type !== 'message' || el.hasAttribute('disabled')) return;
+    const ctx = context();
+    const { contact, deal } = composerContext(ctx);
+    const text = composedText();
+    if (!text || !contact) {
+      event?.preventDefault();
+      return;
+    }
+    const settings = ctx.settings;
+    const href = channel === 'whatsapp'
+      ? waLink(contact.phone, text, settings.countryCode)
+      : mailtoLink(contact.email, deal?.title || 'Following up', text);
+    el.setAttribute('href', href);
+    if (openUrl) {
+      event?.preventDefault();
+      openUrl(href);
+    }
+    const template = templatesFrom(settings).find((item) => item.id === modal.templateId);
+    const activity = store.create('activities', {
+      type: channel,
+      status: 'done',
+      channel,
+      contactId: contact.id,
+      dealId: modal.dealId || null,
+      companyId: companyIdFor(contact.id),
+      title: template ? `${template.name} · ${channel === 'whatsapp' ? 'WhatsApp' : 'Email'}` : suggestTitle(text),
+      description: text,
+      date: now().toISOString(),
+      duration: null,
+      outcome: 'Sent',
+    });
+    pushToast('success', `${channel === 'whatsapp' ? 'Opening WhatsApp' : 'Opening email'} · saved to the Chronicle`, {
+      label: 'Undo',
+      run: () => store.delete('activities', activity.id),
+    });
+    // The link's navigation runs after this handler, so the sheet must stay in the DOM until then.
+    setTimeout(() => {
+      if (ui.modal !== modal) return;
+      ui.modal = null;
+      render();
+    }, 0);
+  }
+
+  function copyText(text, message) {
+    const target = clipboard !== undefined ? clipboard : navigator.clipboard;
+    if (!target?.writeText) {
+      pushToast('error', 'Copying isn’t available in this browser');
+      render();
+      return;
+    }
+    Promise.resolve(target.writeText(text)).then(
+      () => pushToast('success', message),
+      () => pushToast('error', 'Couldn’t copy. Select the text and copy it instead'),
+    ).then(() => render());
+  }
+
+  /* ───────────── calls ───────────── */
+
+  function openCall(el) {
+    const refs = refsOf(el);
+    let { contactId } = refs;
+    const { dealId, companyId } = refs;
+    const contacts = store.getAll('contacts');
+    const deal = dealId ? store.getById('deals', dealId) : null;
+    if (deal && el.dataset.direct !== 'true') {
+      const reachable = stakeholderEntries(deal).map((entry) => store.getById('contacts', entry.contactId)).filter((person) => person?.phone);
+      contactId = reachable.length > 1 ? '' : reachable[0]?.id || contactId || deal.contactId;
+    } else if (!contactId && companyId) {
+      const reachable = peopleAt(store.getById('companies', companyId), contacts, store.getAll('companies')).filter((person) => person.phone);
+      contactId = reachable.length === 1 ? reachable[0].id : '';
+    }
+    openModal({ type: 'call', contactId, dealId: deal ? dealId : '', companyId });
+    render();
+  }
+
+  function callVia(el, event) {
+    const modal = ui.modal;
+    if (modal?.type !== 'call' || !modal.contactId) return;
+    pendingCall = {
+      contactId: modal.contactId,
+      dealId: modal.dealId || openDealFor(modal.contactId),
+      channel: el.dataset.channel === 'whatsapp' ? 'whatsapp' : 'phone',
+      startedAt: Date.now(),
+      at: now().toISOString(),
+      left: false,
+    };
+    if (openUrl) {
+      event?.preventDefault();
+      openUrl(el.getAttribute('href'));
+    }
+    setTimeout(() => {
+      if (ui.modal !== modal) return;
+      ui.modal = null;
+      render();
+    }, 0);
+  }
+
+  function onAway() {
+    if (pendingCall) pendingCall.left = true;
+  }
+
+  /** Back from the dialler or WhatsApp: offer to log the call while it is fresh. */
+  function onBack() {
+    if (!pendingCall?.left || document.visibilityState === 'hidden') return;
+    const call = pendingCall;
+    pendingCall = null;
+    if (ui.modal || ui.confirm || !store.getById('contacts', call.contactId)) return;
+    openModal({
+      type: 'activity',
+      activityType: 'call',
+      returning: true,
+      preset: {
+        contactId: call.contactId,
+        dealId: call.dealId,
+        channel: call.channel,
+        title: `${call.channel === 'whatsapp' ? 'WhatsApp call' : 'Call'} with ${firstName(call.contactId)}`,
+        duration: Math.max(1, Math.round((Date.now() - call.startedAt) / 60000)),
+        date: call.at,
+      },
+    });
+    render();
+  }
+
+  function onVisibility() {
+    if (document.visibilityState === 'hidden') onAway();
+    else onBack();
+  }
+
+  /* ───────────── voice notes ───────────── */
+
+  function speech() {
+    return speechFactory !== undefined ? speechFactory : browserSpeech(window);
+  }
+
+  function openVoice(refs) {
+    const { contactId, dealId } = resolveRefs(refs);
+    const factory = speech();
+    const base = {
+      type: 'voice',
+      preset: { contactId, dealId: dealId || openDealFor(contactId) },
+      startedAt: now().toISOString(),
+      draft: {},
+      base: '',
+      transcript: '',
+      interim: '',
+      elapsed: 0,
+      error: '',
+    };
+    if (!factory) {
+      openModal({ ...base, phase: 'review', supported: false });
+      render();
+      return;
+    }
+    openModal({ ...base, phase: 'recording', state: 'listening', supported: true });
+    render();
+    startDictation(factory);
+  }
+
+  function joinText(...parts) {
+    return parts.map((part) => String(part ?? '').trim()).filter(Boolean).join(' ');
+  }
+
+  function paintTranscript(modal) {
+    const box = root.querySelector('[data-voice-transcript]');
+    if (!box) return;
+    box.innerHTML = modal.transcript || modal.interim
+      ? `<span class="final">${esc(modal.transcript)}</span> <span class="interim">${esc(modal.interim)}</span>`
+      : '<span class="placeholder">Your words appear here as you speak.</span>';
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function startDictation(factory = speech()) {
+    const modal = ui.modal;
+    const live = () => ui.modal === modal && modal.phase === 'recording';
+    dictation = createDictation({
+      factory,
+      lang: store.getSettings().voiceLang || 'en-IN',
+      onChange: ({ final, interim }) => {
+        if (!live()) return;
+        modal.transcript = joinText(modal.base, final);
+        modal.interim = interim;
+        paintTranscript(modal);
+      },
+      onError: (message) => {
+        if (ui.modal === modal) modal.error = message;
+      },
+      onState: (state) => {
+        if (!live()) return;
+        modal.state = state;
+        if (state === 'stopped') finishRecording();
+        else render();
+      },
+    });
+    clearInterval(voiceTimer);
+    voiceTimer = setInterval(() => {
+      if (!live() || modal.state !== 'listening') return;
+      modal.elapsed += 1;
+      const timer = root.querySelector('[data-voice-timer]');
+      if (timer) timer.textContent = formatClock(modal.elapsed);
+    }, 1000);
+    dictation.start();
+    if (!wakeLock && navigator.wakeLock?.request) {
+      navigator.wakeLock.request('screen').then((lock) => {
+        if (dictation) wakeLock = lock;
+        else lock.release?.();
+      }).catch(() => {});
+    }
+  }
+
+  function endDictation() {
+    const current = dictation;
+    dictation = null;
+    current?.abort();
+    clearInterval(voiceTimer);
+    voiceTimer = 0;
+    Promise.resolve(wakeLock?.release?.()).catch(() => {});
+    wakeLock = null;
+  }
+
+  function finishRecording() {
+    const modal = ui.modal;
+    if (modal?.type !== 'voice' || modal.phase !== 'recording') return;
+    if (dictation) {
+      const { final, interim } = dictation.text;
+      modal.transcript = joinText(modal.base, final, interim);
+    }
+    endDictation();
+    modal.phase = 'review';
+    modal.interim = '';
+    delete modal.draft.description;
+    delete modal.draft.title;
+    render();
+  }
+
+  function resumeRecording() {
+    const modal = ui.modal;
+    const dialog = root.querySelector('.overlay-host [role="dialog"]');
+    if (modal?.type !== 'voice' || !dialog) return;
+    modal.base = read(dialog, 'description').trim();
+    modal.transcript = modal.base;
+    modal.interim = '';
+    modal.error = '';
+    modal.phase = 'recording';
+    modal.state = 'listening';
+    render();
+    startDictation();
+  }
+
+  function saveVoiceNote(dialog, modal) {
+    const description = read(dialog, 'description').trim();
+    const data = {
+      type: 'note',
+      status: 'done',
+      source: modal.supported === false ? 'typed' : 'voice',
+      durationSec: modal.elapsed || 0,
+      contactId: read(dialog, 'contact'),
+      dealId: read(dialog, 'deal') || null,
+      title: read(dialog, 'title').trim() || suggestTitle(description),
+      description,
+      date: modal.startedAt,
+      duration: null,
+      outcome: '',
+    };
+    const result = validateActivity(data, { contacts: store.getAll('contacts'), deals: store.getAll('deals') });
+    const errors = description ? result.errors : [{ field: 'description', message: 'Say or type something first' }, ...result.errors];
+    if (errors.length) return showFieldErrors(dialog, errors);
+    data.companyId = companyIdFor(data.contactId);
+    const planNext = dialog.querySelector('[data-field="planNext"]')?.checked;
+    const note = store.create('activities', data);
+    pushToast('success', `Note saved for ${firstName(data.contactId)}`, { label: 'Undo', run: () => store.delete('activities', note.id) });
+    if (planNext) {
+      openPlan({ contactId: data.contactId, dealId: data.dealId || '' });
+      return;
+    }
+    ui.modal = null;
+    render();
+  }
+
   function addTag() {
     const view = root.querySelector('[data-view="settings"]');
     const name = view?.querySelector('[data-field="tagName"]')?.value ?? '';
@@ -1072,15 +1940,14 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     render();
   }
 
-  function exportBackup() {
-    const json = store.exportAll();
+  function download(filename, blob, decorate = () => {}) {
     const link = document.createElement('a');
-    link.download = exportFilename(now());
-    link.dataset.export = json;
+    link.download = filename;
+    decorate(link);
     link.hidden = true;
     document.body.appendChild(link);
     if (ANIMATE && typeof URL.createObjectURL === 'function') {
-      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+      const url = URL.createObjectURL(blob);
       link.href = url;
       link.click();
       setTimeout(() => {
@@ -1090,7 +1957,32 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     } else {
       link.href = '#';
     }
-    pushToast('success', `Exported ${link.download}`);
+  }
+
+  function exportBackup() {
+    const json = store.exportAll();
+    const filename = exportFilename(now());
+    download(filename, new Blob([json], { type: 'application/json' }), (link) => {
+      link.dataset.export = json;
+    });
+    pushToast('success', `Exported ${filename}`);
+    render();
+  }
+
+  async function downloadWorkbook({ blank }) {
+    const at = now();
+    const workspace = cloud ? cloud.state.me.tenant.name : '';
+    const filename = blank ? 'nexus-import-template.xlsx' : spreadsheetFilename(at, workspace);
+    try {
+      const sheets = workbookSheets(JSON.parse(store.exportAll()), { settings: store.getSettings(), blank, workspace, now: at });
+      const bytes = await writeXlsx(sheets, { now: at });
+      download(filename, new Blob([bytes], { type: XLSX_TYPE }), (link) => {
+        link.workbook = bytes;
+      });
+      pushToast('success', blank ? `Downloaded ${filename}` : `Exported ${plural(store.recordCount(), 'record')} to ${filename}`);
+    } catch {
+      pushToast('error', 'The Excel file could not be created');
+    }
     render();
   }
 
@@ -1133,6 +2025,89 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     render();
   }
 
+  async function readBytes(file) {
+    if (typeof file?.arrayBuffer === 'function') return file.arrayBuffer();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  async function loadWorkbook(file) {
+    if (cloud && !cloud.view().isAdmin) return;
+    let workbook;
+    try {
+      workbook = await readXlsx(await readBytes(file));
+    } catch (error) {
+      pushToast('error', /excel/i.test(error?.message || '') ? error.message : 'That file could not be read as an Excel workbook');
+      render();
+      return;
+    }
+    if (cloud) {
+      try {
+        await cloud.refresh();
+      } catch { /* plan against the cached copy when the latest can't be fetched */ }
+    }
+    let plan;
+    try {
+      plan = planSpreadsheetImport(workbook, JSON.parse(store.exportAll()), { now: now(), settings: store.getSettings() });
+    } catch {
+      pushToast('error', 'That workbook could not be checked. Start from a template downloaded from Settings.');
+      render();
+      return;
+    }
+    ui.workbookOps = plan.ops;
+    openModal({
+      type: 'excel-import',
+      fileName: file.name || 'Workbook',
+      plan: { counts: plan.counts, problems: plan.problems, warnings: plan.warnings, rows: plan.rows, changes: plan.ops.length },
+    });
+    render();
+  }
+
+  async function applyWorkbook() {
+    const modal = ui.modal;
+    const ops = ui.workbookOps || [];
+    if (modal?.type !== 'excel-import' || modal.busy || !ops.length) return;
+    const skipped = modal.plan.problems.length;
+    const skippedNote = skipped ? ` ${plural(skipped, 'row')} with problems ${skipped === 1 ? 'was' : 'were'} skipped.` : '';
+    if (!cloud) {
+      try {
+        store.applyChanges(ops);
+        pushToast('success', `Imported ${plural(ops.length, 'change')}.${skippedNote}`);
+      } catch (error) {
+        pushToast('error', error.message);
+      }
+      ui.modal = null;
+      ui.workbookOps = null;
+      render();
+      return;
+    }
+    modal.busy = { done: 0, total: ops.length };
+    render();
+    try {
+      const result = await cloud.pushChanges(ops, {
+        onProgress: (done, total) => {
+          if (ui.modal !== modal) return;
+          modal.busy = { done, total };
+          render();
+        },
+      });
+      const notes = [];
+      if (result.rejected.length) notes.push(`${plural(result.rejected.length, 'record')} ${result.rejected.length === 1 ? 'was' : 'were'} refused by the server: ${result.rejected[0].message}`);
+      if (result.conflicts) notes.push(`${plural(result.conflicts, 'record')} had just been edited by a teammate and ${result.conflicts === 1 ? 'was' : 'were'} replaced with your file's version.`);
+      pushToast(result.rejected.length ? 'error' : 'success', `Imported ${plural(result.saved, 'change')} for the whole team.${skippedNote}${notes.length ? ` ${notes.join(' ')}` : ''}`);
+    } catch (error) {
+      const saved = error.saved ? `Saved ${error.saved.toLocaleString()} of ${ops.length.toLocaleString()} changes, then stopped: ` : '';
+      pushToast('error', `${saved}${error.message || 'Import failed'}${error.saved ? '. Import the same file again to finish.' : ''}`);
+    }
+    if (ui.modal === modal) ui.modal = null;
+    ui.workbookOps = null;
+    render();
+  }
+
   function filterPicker(dialog, input) {
     const select = dialog.querySelector(`[data-field="${input.dataset.pickerFor}"]`);
     if (!select) return;
@@ -1147,6 +2122,8 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     if (needle && firstVisible && (select.selectedOptions[0]?.hidden || !select.value)) {
       select.value = firstVisible.value;
       syncDealOptions(dialog);
+      syncStakeholderOptions(dialog);
+      rememberDraft(select.dataset.field, select.value);
       clearFieldError(dialog, select.dataset.field);
     }
   }
@@ -1155,9 +2132,11 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     const dealSelect = dialog.querySelector('[data-field="deal"]');
     if (!dealSelect) return;
     const contactId = read(dialog, 'contact');
+    const company = dialog.querySelector('[data-field="contact"]')?.selectedOptions?.[0]?.dataset.company || '';
     for (const option of dealSelect.options) {
       if (!option.value) continue;
-      const mismatch = Boolean(contactId) && option.dataset.contact !== contactId;
+      const people = (option.dataset.people || option.dataset.contact || '').split(' ');
+      const mismatch = Boolean(contactId) && !people.includes(contactId) && !(company && option.dataset.company === company);
       option.hidden = mismatch;
       option.disabled = mismatch;
     }
@@ -1166,10 +2145,33 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
 
   function onInput(event) {
     const el = event.target;
+    if (cloud?.handleInput(el)) return;
     const dialog = el.closest('[role="dialog"], [role="alertdialog"]');
     if (dialog) {
       if (el.dataset.pickerFor) filterPicker(dialog, el);
       if (el.dataset.field) clearFieldError(dialog, el.dataset.field);
+      if (ui.modal?.type === 'message' && el.dataset.field === 'message') {
+        ui.modal.text = el.value;
+        updateComposer(dialog);
+      } else if (SHEET_TYPES.includes(ui.modal?.type) && el.dataset.field && el.type !== 'checkbox') {
+        rememberDraft(el.dataset.field, el.value);
+      }
+      if (ui.modal?.type === 'contact' && el.dataset.field === 'company') {
+        const hint = dialog.querySelector('[data-company-hint]');
+        if (hint) hint.innerHTML = companyHint(el.value, store.getAll('companies'));
+      }
+      return;
+    }
+    if (el.dataset.field === 'countryCode') {
+      store.updateSettings({ countryCode: el.value.trim() });
+      return;
+    }
+    if (el.dataset.templateName != null || el.dataset.templateBody != null) {
+      const index = Number(el.dataset.templateName ?? el.dataset.templateBody);
+      const templates = editableTemplates();
+      if (!templates[index]) return;
+      templates[index][el.dataset.templateName != null ? 'name' : 'body'] = el.value;
+      store.updateSettings({ templates });
       return;
     }
     if (el.matches('[data-search]')) {
@@ -1211,19 +2213,49 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
 
   function onChange(event) {
     const el = event.target;
+    if (cloud?.handleChange(el)) return;
     const field = el.dataset.field;
-    if (field === 'import' && el.files?.[0]) {
+    if ((field === 'import' || field === 'excel-import') && el.files?.[0]) {
       const file = el.files[0];
-      loadImport(file);
+      if (field === 'import') loadImport(file);
+      else loadWorkbook(file);
       try {
         el.value = '';
       } catch { /* some environments disallow resetting file inputs */ }
       return;
     }
-    if (el.closest('[role="dialog"]')) {
-      if (field === 'contact') syncDealOptions(el.closest('[role="dialog"]'));
+    const dialog = el.closest('[role="dialog"]');
+    if (dialog) {
+      if (field === 'contact' && (ui.modal?.type === 'message' || ui.modal?.type === 'call')) {
+        ui.modal.contactId = el.value;
+        if (ui.modal.type === 'message' && !ui.modal.dealId) ui.modal.dealId = openDealFor(el.value);
+        render();
+        return;
+      }
+      if (field === 'contact') {
+        syncDealOptions(dialog);
+        syncStakeholderOptions(dialog);
+      }
+      if (SHEET_TYPES.includes(ui.modal?.type)) {
+        if (el.matches('[data-plan-type]')) {
+          rememberDraft('planType', el.value);
+          render();
+          return;
+        }
+        if (field) rememberDraft(field, el.type === 'checkbox' ? el.checked : el.value);
+        if (field === 'contact') rememberDraft('deal', read(dialog, 'deal'));
+      }
       return;
     }
+    if (el.dataset.stakeholderRole) {
+      setStakeholderRole(el.dataset.dealRef, el.dataset.stakeholderRole, el.value);
+      return;
+    }
+    if (field === 'voiceLang') {
+      store.updateSettings({ voiceLang: el.value });
+      return;
+    }
+    if (field === 'countryCode') return;
     if (el.name === 'priority') {
       const selected = new Set(ui.filters.priorities);
       if (el.checked) selected.add(el.value);
@@ -1445,6 +2477,11 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
   }
 
   function onKey(event) {
+    if (cloud?.handleKey(event)) return;
+    if (event.key === 'Escape' && cloud?.closeMenus()) {
+      render();
+      return;
+    }
     if (event.key === 'Tab' && lastOverlay && trapFocus(event)) {
       event.preventDefault();
       return;
@@ -1483,6 +2520,11 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     if (action.type === 'create') {
       event.preventDefault();
       newForView();
+      return;
+    }
+    if (action.type === 'voice') {
+      event.preventDefault();
+      openVoice(routePreset());
     }
   }
 
@@ -1504,10 +2546,18 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
     window.addEventListener('pointerup', onPointerUp);
     root.addEventListener('touchstart', onTouchStart, { passive: true });
     root.addEventListener('touchend', onTouchEnd);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('blur', onAway);
+    window.addEventListener('focus', onBack);
     const onStore = () => render();
     store.subscribe(onStore);
+    cloud?.connect({ ui, store, render, pushToast });
     stopPrevious = () => {
       alive = false;
+      endDictation();
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('blur', onAway);
+      window.removeEventListener('focus', onBack);
       window.removeEventListener('hashchange', onHash);
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('pointermove', onPointerMove);
@@ -1519,7 +2569,13 @@ export function createApp({ root, storage, clock, seed = false, storageKey = 'ne
       store.unsubscribe(onStore);
     };
     render();
+    cloud?.offerLegacyImport();
   }
 
-  return { store, start };
+  function notify(tone, message) {
+    pushToast(tone, message);
+    render();
+  }
+
+  return { store, start, notify };
 }

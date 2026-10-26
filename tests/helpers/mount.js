@@ -16,6 +16,9 @@ export function mount(options = {}) {
     storage: options.storage ?? localStorage,
     clock,
     seed: options.seed ?? false,
+    openUrl: options.openUrl ?? null,
+    speechFactory: options.speechFactory,
+    clipboard: options.clipboard,
   });
   app.start();
   return app;
@@ -26,6 +29,12 @@ export function click(target) {
   if (!el) throw new Error(`No element for click: ${target}`);
   el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
   return el;
+}
+
+/** Changes the route and renders synchronously (jsdom fires hashchange asynchronously). */
+export function navigate(hash) {
+  window.location.hash = hash;
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
 }
 
 export function field(name, root = document) {

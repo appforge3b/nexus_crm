@@ -1,4 +1,6 @@
 import { ACTIVE_STAGES } from './stages.js';
+import { doneOnly, nextStepForDeal, planningInUse } from './agenda.js';
+import { dealContactIds } from './companies.js';
 
 function calendarDaysUntil(dateValue, now) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dateValue ?? ''));
@@ -34,7 +36,8 @@ export function scoreDeal(deal, { now, deals, activities }) {
   else if (daysUntil > 3 && daysUntil <= 7) reasons.push({ points: 20, text: 'Closing this week' });
   else if (daysUntil != null && daysUntil < 0) reasons.push({ points: 35, text: `Close date passed ${Math.abs(daysUntil)} days ago` });
 
-  const mine = (activities ?? []).filter((activity) => activity.contactId === deal.contactId);
+  const people = new Set(dealContactIds(deal));
+  const mine = doneOnly(activities).filter((activity) => people.has(activity.contactId) && new Date(activity.date) <= now);
   if (!mine.length) reasons.push({ points: 30, text: 'Going cold — no contact yet' });
   else {
     const last = Math.max(...mine.map((activity) => new Date(activity.date).getTime()));
@@ -56,6 +59,12 @@ export function scoreDeal(deal, { now, deals, activities }) {
 
   if (deal.priority === 'critical') reasons.push({ points: 20, text: 'Marked critical' });
   else if (deal.priority === 'high') reasons.push({ points: 10, text: 'Marked high priority' });
+
+  if (planningInUse(activities)) {
+    const step = nextStepForDeal(deal, activities);
+    if (!step) reasons.push({ points: 10, text: 'No next step planned' });
+    else if (new Date(step.date).getTime() < now.getTime()) reasons.push({ points: 25, text: `Follow-up overdue: ${step.title}` });
+  }
 
   reasons.sort((a, b) => b.points - a.points);
   const score = reasons.reduce((sum, reason) => sum + reason.points, 0);
