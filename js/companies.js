@@ -27,8 +27,10 @@ export function companyIdOf(contact, companies) {
 
 export function peopleAt(company, contacts, companies) {
   if (!company) return [];
+  const compId = company.id;
+  const compKey = companyKey(company.name);
   return (contacts ?? [])
-    .filter((contact) => companyOf(contact, companies)?.id === company.id)
+    .filter((contact) => (contact.companyId ? contact.companyId === compId : (compKey && companyKey(contact.company) === compKey)))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 

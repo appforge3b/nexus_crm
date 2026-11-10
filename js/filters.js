@@ -1,5 +1,5 @@
 import { calendarKey } from './format.js';
-import { companyOf, customerCompanyId, peopleAt } from './companies.js';
+import { companyKey, companyOf, customerCompanyId, peopleAt } from './companies.js';
 
 function includes(query, ...fields) {
   const needle = String(query ?? '').trim().toLowerCase();
@@ -37,12 +37,28 @@ export function filterContacts(contacts, { query = '', status = 'all' } = {}) {
 }
 
 export function filterCompanies(companies, contacts, query) {
-  return (companies ?? []).filter((company) => includes(
-    query,
-    company.name,
-    company.industry,
-    ...peopleAt(company, contacts, companies).map((person) => person.name),
-  ));
+  if (!companies?.length) return [];
+  const clean = String(query ?? '').trim();
+  if (!clean) return [...companies];
+  const peopleByCompanyId = new Map();
+  const peopleByCompanyKey = new Map();
+  for (const c of (contacts ?? [])) {
+    if (c.companyId) {
+      let l = peopleByCompanyId.get(c.companyId);
+      if (!l) { l = []; peopleByCompanyId.set(c.companyId, l); }
+      l.push(c.name);
+    }
+    if (c.company) {
+      const k = companyKey(c.company);
+      let l = peopleByCompanyKey.get(k);
+      if (!l) { l = []; peopleByCompanyKey.set(k, l); }
+      l.push(c.name);
+    }
+  }
+  return companies.filter((company) => {
+    const people = peopleByCompanyId.get(company.id) || peopleByCompanyKey.get(companyKey(company.name)) || [];
+    return includes(clean, company.name, company.industry, ...people);
+  });
 }
 
 export function filterActivities(activities, criteria = {}) {

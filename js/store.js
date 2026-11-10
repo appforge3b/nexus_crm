@@ -75,7 +75,13 @@ export class Store {
   }
 
   #persist() {
-    this.storage.setItem(this.storageKey, JSON.stringify(this.state));
+    try {
+      this.storage.setItem(this.storageKey, JSON.stringify(this.state));
+    } catch (error) {
+      // In cloud mode, Cloudflare D1 is the master database. If the browser's localStorage
+      // quota (~5MB) is exceeded by a large tenant dataset, keep working in memory without crashing sync.
+      if (!this.recorder) throw error;
+    }
   }
 
   #notify(event) {

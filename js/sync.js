@@ -55,8 +55,12 @@ export function createSync({
   const listeners = new Set();
   let status = { state: isOnline() ? 'idle' : 'offline', pending: outbox.length, lastSyncedAt: meta.lastSyncedAt, error: null };
 
-  const saveOutbox = () => storage.setItem(outboxKey(tenantId), JSON.stringify(outbox));
-  const saveMeta = () => storage.setItem(metaKey(tenantId), JSON.stringify(meta));
+  const saveOutbox = () => {
+    try { storage.setItem(outboxKey(tenantId), JSON.stringify(outbox)); } catch {}
+  };
+  const saveMeta = () => {
+    try { storage.setItem(metaKey(tenantId), JSON.stringify(meta)); } catch {}
+  };
 
   function setStatus(patch) {
     const next = { ...status, ...patch, pending: outbox.length };

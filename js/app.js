@@ -77,6 +77,7 @@ export function createApp({
     rosterDraft: '',
     rosterStatus: 'all',
     rosterMode: 'people',
+    rosterLimit: 60,
     customerQuery: '',
     chronicleType: 'all',
     chronicleStatus: 'all',
@@ -118,6 +119,7 @@ export function createApp({
 
   const applyRoster = debounce((value) => {
     ui.rosterQuery = value;
+    ui.rosterLimit = 60;
     render();
   }, 300);
 
@@ -732,9 +734,16 @@ export function createApp({
     const rosterMode = target.closest('[data-roster-mode]');
     if (rosterMode) {
       ui.rosterMode = rosterMode.dataset.rosterMode;
+      ui.rosterLimit = 60;
       const route = parseRoute(window.location.hash);
       if (route.params.contact || route.params.company) go('#/roster');
       else render();
+      return;
+    }
+    const loadMoreRoster = target.closest('[data-action="load-more-roster"]');
+    if (loadMoreRoster) {
+      ui.rosterLimit = (ui.rosterLimit || 60) + 60;
+      render();
       return;
     }
     const chronStatus = target.closest('[data-chron-status]');
@@ -766,6 +775,7 @@ export function createApp({
     const statusTab = target.closest('[data-status-tab]');
     if (statusTab) {
       ui.rosterStatus = statusTab.dataset.statusTab;
+      ui.rosterLimit = 60;
       render();
       return;
     }

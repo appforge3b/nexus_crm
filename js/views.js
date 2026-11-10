@@ -607,6 +607,9 @@ function renderRoster(ctx, currency) {
 
   if (mode === 'companies') {
     const visible = filterCompanies(companies, contacts, ui.rosterQuery).sort((a, b) => a.name.localeCompare(b.name));
+    const limit = ui.rosterLimit || 60;
+    const page = visible.slice(0, limit);
+    const hasMore = page.length < visible.length;
     return `
       <section data-view="roster" class="view">
         <header class="view-header roster-header stagger">
@@ -614,7 +617,8 @@ function renderRoster(ctx, currency) {
           <label class="search-box wide">${icon('search', 16)}<input data-search type="search" placeholder="Search companies or people..." value="${esc(ui.rosterDraft)}" aria-label="Search companies"></label>
           <button type="button" class="btn primary" data-action="new-company">${icon('plus', 16)}Add Company</button>
         </header>
-        ${visible.length ? `<div class="contact-grid stagger">${visible.map((company, index) => renderCompanyCard(company, ctx, currency, index)).join('')}</div>`
+        ${visible.length ? `<div class="contact-grid stagger">${page.map((company, index) => renderCompanyCard(company, ctx, currency, index)).join('')}</div>
+          ${hasMore ? `<div class="roster-page-controls" style="text-align:center;padding:24px 0"><button type="button" class="btn ghost" data-action="load-more-roster">Showing ${page.length} of ${visible.length} companies · Load more</button></div>` : ''}`
           : emptyState('building', companies.length ? 'No companies match.' : 'No companies yet.', companies.length ? 'Try a different search.' : 'Companies are created when you add a contact with a company name, or add one here.')}
         ${panel}
       </section>
@@ -623,6 +627,9 @@ function renderRoster(ctx, currency) {
 
   const visible = filterContacts(contacts, { query: ui.rosterQuery, status: ui.rosterStatus })
     .sort((a, b) => a.name.localeCompare(b.name));
+  const limit = ui.rosterLimit || 60;
+  const page = visible.slice(0, limit);
+  const hasMore = page.length < visible.length;
   const counts = {
     all: contacts.length,
     prospect: contacts.filter((contact) => contact.status === 'prospect').length,
@@ -640,7 +647,8 @@ function renderRoster(ctx, currency) {
         </div>
         <button type="button" class="btn primary" data-action="new-contact">${icon('plus', 16)}Add Contact</button>
       </header>
-      ${visible.length ? `<div class="contact-grid stagger">${visible.map((contact, index) => renderContactCard(contact, ctx, currency, index)).join('')}</div>`
+      ${visible.length ? `<div class="contact-grid stagger">${page.map((contact, index) => renderContactCard(contact, ctx, currency, index)).join('')}</div>
+        ${hasMore ? `<div class="roster-page-controls" style="text-align:center;padding:24px 0"><button type="button" class="btn ghost" data-action="load-more-roster">Showing ${page.length} of ${visible.length} contacts · Load more</button></div>` : ''}`
         : emptyState('roster', contacts.length ? 'No contacts match.' : 'No contacts yet.', contacts.length ? 'Try a different search or tab.' : 'Add your first contact to start building relationships.')}
       ${panel}
     </section>
