@@ -3,6 +3,8 @@ import {
   companyOf,
   dealContactIds,
   dealsForCompany,
+  indexCompanies,
+  indexPeopleByCompany,
   peopleAt,
   stakeholderEntries,
   stakeholdersFor,
@@ -48,5 +50,17 @@ describe('companies', () => {
     expect(validateCompany({ name: ' ' }, { companies }).errors[0].message).toBe('Company name is required');
     expect(validateCompany({ name: 'HELIOS BANK' }, { companies }).errors[0].message).toBe('A company with that name already exists');
     expect(validateCompany({ name: 'Tata Digital' }, { companies }).ok).toBe(true);
+  });
+
+  it('indexes companies and groups sorted colleagues in O(1) lookup structures', () => {
+    const resolve = indexCompanies(companies);
+    expect(resolve.byId.get('co1')).toBe(companies[0]);
+    expect(resolve(contacts[0])?.id).toBe('co1');
+    expect(resolve(contacts[1])?.id).toBe('co1');
+    expect(resolve(contacts[2])).toBeNull();
+
+    const byCompany = indexPeopleByCompany(contacts, companies, resolve);
+    expect(byCompany.get('co1').map((person) => person.id)).toEqual(['a', 'v']);
+    expect(byCompany.size).toBe(1);
   });
 });

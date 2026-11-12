@@ -4,6 +4,7 @@ import { defaultSettings } from './settings.js';
 const PUSH_BATCH = 200;
 const PULL_INTERVAL_MS = 60_000;
 const FLUSH_DELAY_MS = 600;
+const CACHE_DELAY_MS = 500;
 const MAX_RETRY_MS = 60_000;
 
 export const cacheKey = (tenantId) => `nexus:t:${tenantId}`;
@@ -23,6 +24,22 @@ function changeKey(change) {
   return change.op === 'settings' ? 'settings' : `${change.collection}/${change.id}`;
 }
 
+function applyOutbox(doc, changes) {
+  for (const change of changes) {
+    if (change.op === 'settings') {
+      doc.settings = change.data;
+      continue;
+    }
+    const list = doc[change.collection];
+    if (!list) continue;
+    const index = list.findIndex((item) => item.id === change.id);
+    if (change.op === 'delete') {
+      if (index >= 0) list.splice(index, 1);
+    } else if (index >= 0) list[index] = change.data;
+    else list.push(change.data);
+  }
+}
+
 /**
  * Keeps one tenant's local cache in step with the server.
  * Local changes queue in a persisted outbox (so they survive reloads and offline spells) and are pushed in batches;
@@ -33,6 +50,7 @@ export function createSync({
   api,
   storage,
   tenantId,
+  cache = null,
   win = typeof window === 'undefined' ? null : window,
   timers = globalThis,
   isOnline = () => typeof navigator === 'undefined' || navigator.onLine !== false,
@@ -41,8 +59,10 @@ export function createSync({
   let store = null;
   let outbox = readJson(storage, outboxKey(tenantId), []);
   let meta = readJson(storage, metaKey(tenantId), { cursor: null, versions: {}, lastSyncedAt: null });
+  let backedByCache = false;
   let counter = Date.now();
   let flushTimer = 0;
+  let cacheTimer = 0;
   let retryTimer = 0;
   let retryDelay = 5_000;
   let interval = 0;
@@ -55,12 +75,43 @@ export function createSync({
   const listeners = new Set();
   let status = { state: isOnline() ? 'idle' : 'offline', pending: outbox.length, lastSyncedAt: meta.lastSyncedAt, error: null };
 
+  const hasValidSnapshot = () => {
+    if (!store) return true;
+    if (store.persisted) {
+      // Heal devices left with an empty localStorage doc + non-empty versions meta from an earlier quota failure.
+      if (store.recordCount() === 0 && Object.keys(meta.versions || {}).length > 0 && !backedByCache) return false;
+      return true;
+    }
+    return backedByCache;
+  };
+
   const saveOutbox = () => {
     try { storage.setItem(outboxKey(tenantId), JSON.stringify(outbox)); } catch {}
   };
   const saveMeta = () => {
-    try { storage.setItem(metaKey(tenantId), JSON.stringify(meta)); } catch {}
+    try {
+      const payload = hasValidSnapshot() ? meta : { cursor: null, versions: {}, lastSyncedAt: meta.lastSyncedAt };
+      storage.setItem(metaKey(tenantId), JSON.stringify(payload));
+    } catch {}
   };
+
+  function saveCacheNow() {
+    if (!cache || !store || store.persisted) return Promise.resolve(false);
+    timers.clearTimeout(cacheTimer);
+    return cache.save(tenantId, { doc: store.readState(), meta }).then((ok) => {
+      if (ok) {
+        backedByCache = true;
+        saveMeta();
+      }
+      return ok;
+    });
+  }
+
+  function scheduleCacheSave() {
+    if (!cache || !store || store.persisted) return;
+    timers.clearTimeout(cacheTimer);
+    cacheTimer = timers.setTimeout(() => saveCacheNow(), CACHE_DELAY_MS);
+  }
 
   function setStatus(patch) {
     const next = { ...status, ...patch, pending: outbox.length };
@@ -100,6 +151,7 @@ export function createSync({
     outbox = outbox.filter((item) => item.key !== entry.key);
     outbox.push(entry);
     saveOutbox();
+    scheduleCacheSave();
     setStatus({});
     timers.clearTimeout(flushTimer);
     flushTimer = timers.setTimeout(() => flush(), FLUSH_DELAY_MS);
@@ -145,20 +197,9 @@ export function createSync({
       meta.versions[`${item.collection}/${item.id}`] = item.version;
     }
     doc.settings = { ...defaultSettings(), ...(response.settings || {}) };
-    for (const change of outbox) {
-      if (change.op === 'settings') {
-        doc.settings = change.data;
-        continue;
-      }
-      const list = doc[change.collection];
-      if (!list) continue;
-      const index = list.findIndex((item) => item.id === change.id);
-      if (change.op === 'delete') {
-        if (index >= 0) list.splice(index, 1);
-      } else if (index >= 0) list[index] = change.data;
-      else list.push(change.data);
-    }
-    store.replaceState(doc);
+    applyOutbox(doc, outbox);
+    store.replaceState(doc, { detached: true });
+    if (store.persisted) backedByCache = false;
   }
 
   function applyDelta(response) {
@@ -173,10 +214,15 @@ export function createSync({
   async function pullOnce() {
     try {
       const response = await api.get(meta.cursor == null ? '/api/data' : `/api/data?since=${meta.cursor}`);
-      if (response.mode === 'snapshot') applySnapshot(response);
+      const isSnapshot = response.mode === 'snapshot';
+      if (isSnapshot) applySnapshot(response);
       else applyDelta(response);
       meta.cursor = response.cursor;
       synced();
+      if (!store?.persisted && cache && (isSnapshot || response.records.length || response.settings)) {
+        if (isSnapshot) saveCacheNow();
+        else scheduleCacheSave();
+      }
       resolveReady(true);
       return true;
     } catch (error) {
@@ -230,11 +276,46 @@ export function createSync({
     pull,
     attach(target) {
       store = target;
+      if (!cache && !hasValidSnapshot()) {
+        meta = { cursor: null, versions: {}, lastSyncedAt: meta.lastSyncedAt };
+        saveMeta();
+      }
     },
     start() {
       if (started) return;
       started = true;
-      pull().then(flush);
+      if (cache && store && !hasValidSnapshot()) {
+        pulling = (async () => {
+          try {
+            const saved = await cache.load(tenantId);
+            if (started && saved?.doc && Array.isArray(saved.doc.contacts)) {
+              const doc = saved.doc;
+              applyOutbox(doc, outbox);
+              store.replaceState(doc, { detached: true });
+              if (saved.meta && typeof saved.meta === 'object') {
+                meta = {
+                  cursor: saved.meta.cursor ?? null,
+                  versions: saved.meta.versions ?? {},
+                  lastSyncedAt: saved.meta.lastSyncedAt ?? meta.lastSyncedAt,
+                };
+              }
+              backedByCache = true;
+              saveMeta();
+              setStatus({ state: isOnline() ? 'syncing' : 'offline', lastSyncedAt: meta.lastSyncedAt });
+            } else {
+              meta = { cursor: null, versions: {}, lastSyncedAt: meta.lastSyncedAt };
+              saveMeta();
+            }
+          } catch {
+            meta = { cursor: null, versions: {}, lastSyncedAt: meta.lastSyncedAt };
+          } finally {
+            pulling = null;
+          }
+          return pull().then(flush);
+        })();
+      } else {
+        pull().then(flush);
+      }
       interval = timers.setInterval(() => {
         if (typeof document === 'undefined' || !document.hidden) pull().then(flush);
       }, PULL_INTERVAL_MS);
@@ -247,6 +328,7 @@ export function createSync({
       started = false;
       timers.clearInterval(interval);
       timers.clearTimeout(flushTimer);
+      timers.clearTimeout(cacheTimer);
       timers.clearTimeout(retryTimer);
       win?.removeEventListener('focus', onFocus);
       win?.removeEventListener('online', onOnline);
@@ -289,6 +371,7 @@ export function createSync({
         throw Object.assign(error, { saved: accepted.length });
       } finally {
         store.applyRemote({ records: accepted.map(({ collection, id, data }) => ({ collection, id, data, deleted: false })) });
+        scheduleCacheSave();
       }
       synced();
       return { saved: accepted.length, rejected, conflicts };
@@ -297,6 +380,8 @@ export function createSync({
       const result = await api.post('/api/import', { document });
       outbox = [];
       saveOutbox();
+      backedByCache = false;
+      await cache?.remove(tenantId);
       meta = { cursor: null, versions: {}, lastSyncedAt: meta.lastSyncedAt };
       saveMeta();
       await pull();
@@ -306,12 +391,17 @@ export function createSync({
       await api.post('/api/clear');
       outbox = [];
       saveOutbox();
+      backedByCache = false;
+      await cache?.remove(tenantId);
       meta = { cursor: null, versions: {}, lastSyncedAt: meta.lastSyncedAt };
       saveMeta();
       await pull();
     },
     /** Removes this tenant's cached data from the device (used on sign-out). */
     forget() {
+      timers.clearTimeout(cacheTimer);
+      backedByCache = false;
+      cache?.remove(tenantId);
       for (const key of [cacheKey(tenantId), outboxKey(tenantId), metaKey(tenantId)]) storage.removeItem(key);
       for (let index = storage.length - 1; index >= 0; index -= 1) {
         const key = storage.key(index);

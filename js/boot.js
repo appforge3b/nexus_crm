@@ -1,6 +1,7 @@
 import { createApp } from './app.js';
 import { createApi } from './api.js';
 import { Store } from './store.js';
+import { createTenantCache } from './cache.js';
 import { cacheKey, createSync } from './sync.js';
 import { ME_KEY, createCloud } from './cloud.js';
 import { mountAdmin } from './admin.js';
@@ -57,6 +58,7 @@ export async function bootCloud({
       api,
       storage,
       tenantId,
+      cache: createTenantCache(),
       onRejected: (items) => app?.notify('error', items.length === 1
         ? `A change couldn't be saved: ${items[0].message}`
         : `${plural(items.length, 'change')} couldn't be saved`),

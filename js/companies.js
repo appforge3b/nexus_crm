@@ -3,12 +3,56 @@ import { companyKey } from './migrate.js';
 
 export { companyKey };
 
+const COLLATOR = new Intl.Collator();
+
 export const STAKEHOLDER_ROLES = ['Decision maker', 'Champion', 'Influencer', 'Finance', 'Technical', 'User', 'Blocker'];
 
 export function findCompanyByName(companies, name) {
   const key = companyKey(name);
   if (!key) return null;
   return (companies ?? []).find((company) => companyKey(company.name) === key) ?? null;
+}
+
+/** Builds an O(1) resolver mapping a contact to its company by id or normalized name. */
+export function indexCompanies(companies) {
+  const byId = new Map();
+  const byKey = new Map();
+  for (const company of companies ?? []) {
+    if (!company) continue;
+    byId.set(company.id, company);
+    const key = companyKey(company.name);
+    if (key && !byKey.has(key)) byKey.set(key, company);
+  }
+  const resolve = (contact) => {
+    if (!contact) return null;
+    if (contact.companyId) {
+      const found = byId.get(contact.companyId);
+      if (found) return found;
+    }
+    const key = companyKey(contact.company);
+    return key ? (byKey.get(key) ?? null) : null;
+  };
+  resolve.byId = byId;
+  return resolve;
+}
+
+/** Groups contacts by resolved company id, sorted alphabetically by name. */
+export function indexPeopleByCompany(contacts, companies, resolveCompany = indexCompanies(companies)) {
+  const grouped = new Map();
+  for (const contact of contacts ?? []) {
+    const company = resolveCompany(contact);
+    if (!company) continue;
+    let list = grouped.get(company.id);
+    if (!list) {
+      list = [];
+      grouped.set(company.id, list);
+    }
+    list.push(contact);
+  }
+  for (const list of grouped.values()) {
+    list.sort((a, b) => COLLATOR.compare(a.name, b.name));
+  }
+  return grouped;
 }
 
 /** Resolves a contact's company by id, falling back to the free-text company name. */

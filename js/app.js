@@ -5,12 +5,21 @@ import { debounce } from './debounce.js';
 import { renderOverlay, renderShell, renderView } from './views.js';
 import { moveDeal, confirmConversion, STAGE_PROBABILITY } from './deals.js';
 import { renameStage, stageLabel } from './settings.js';
-import { companyOf, ensureCompany, peopleAt, stakeholderEntries } from './companies.js';
+import { companyOf, ensureCompany, indexCompanies, peopleAt, stakeholderEntries } from './companies.js';
 import { isPlanned, shiftDate, shortDate } from './agenda.js';
 import { mailtoLink, renderTemplate, templatesFrom, waLink } from './messaging.js';
 import { createDictation, formatClock, speechFactory as browserSpeech, suggestTitle } from './voice.js';
 import { SHEET_TYPES, composerContext, whenPreset } from './sheets.js';
-import { companyHint, localDateTime, plural } from './view-helpers.js';
+import {
+  COMPANY_DATALIST_THRESHOLD,
+  companyHint,
+  localDateTime,
+  plural,
+  renderCompanyDatalistOptions,
+  renderContactOptions,
+  renderStakeholderCheckboxes,
+  renderStakeholderOptions,
+} from './view-helpers.js';
 import { renderAccount, renderAccountMenu, renderSyncBanner } from './cloud-views.js';
 import {
   validateActivity,
@@ -137,7 +146,7 @@ export function createApp({
   }
 
   function context() {
-    const customers = store.getAll('customers');
+    const customers = store.read('customers');
     if (!customers.some((customer) => customer.id === ui.selectedCustomerId)) {
       ui.selectedCustomerId = customers[0]?.id ?? null;
     }
@@ -145,13 +154,13 @@ export function createApp({
       route: parseRoute(window.location.hash),
       now: now(),
       settings: cloud ? { ...store.getSettings(), userName: cloud.firstName() } : store.getSettings(),
-      contacts: store.getAll('contacts'),
-      companies: store.getAll('companies'),
-      deals: store.getAll('deals'),
-      activities: store.getAll('activities'),
+      contacts: store.read('contacts'),
+      companies: store.read('companies'),
+      deals: store.read('deals'),
+      activities: store.read('activities'),
       customers,
-      orders: store.getAll('orders'),
-      tags: store.getAll('tags'),
+      orders: store.read('orders'),
+      tags: store.read('tags'),
       ui,
       cloud: cloud ? cloud.view() : null,
     };
@@ -1513,13 +1522,18 @@ export function createApp({
     const select = dialog.querySelector('[data-field="contact"]');
     if (!field || !select) return;
     const company = select.selectedOptions[0]?.dataset.company || '';
-    let any = false;
-    field.querySelectorAll('[data-person]').forEach((label) => {
-      const show = Boolean(company) && label.dataset.personCompany === company && label.dataset.person !== select.value;
-      label.hidden = !show;
-      any ||= show;
-    });
-    field.hidden = !any;
+    const picker = field.querySelector('.tag-picker');
+    if (!picker) return;
+    const checked = new Set([...picker.querySelectorAll('[data-stakeholder-option]:checked')].map((box) => box.value));
+    const rendered = renderStakeholderCheckboxes(
+      store.read('contacts'),
+      company,
+      select.value,
+      checked,
+      indexCompanies(store.read('companies')),
+    );
+    picker.innerHTML = rendered.html;
+    field.hidden = !rendered.hasVisible;
   }
 
   /* ───────────── next steps ───────────── */
@@ -2118,23 +2132,33 @@ export function createApp({
     render();
   }
 
-  function filterPicker(dialog, input) {
-    const select = dialog.querySelector(`[data-field="${input.dataset.pickerFor}"]`);
+  function filterPicker(scope, input) {
+    const fieldName = input.dataset.pickerFor;
+    const select = scope.querySelector(`[data-field="${fieldName}"]`);
     if (!select) return;
-    const needle = input.value.trim().toLowerCase();
-    let firstVisible = null;
-    for (const option of select.options) {
-      if (!option.value) continue;
-      const match = !needle || option.textContent.toLowerCase().includes(needle);
-      option.hidden = !match;
-      if (match && !firstVisible) firstVisible = option;
+    const contacts = store.read('contacts');
+    const resolveCompany = indexCompanies(store.read('companies'));
+    if (fieldName === 'addStakeholder') {
+      const deal = store.getById('deals', input.dataset.dealRef || ui.selectedDealId);
+      if (!deal) return;
+      select.innerHTML = renderStakeholderOptions(deal, contacts, resolveCompany, { query: input.value });
+      if (input.value.trim()) {
+        const first = [...select.options].find((option) => option.value);
+        if (first) select.value = first.value;
+      }
+      return;
     }
-    if (needle && firstVisible && (select.selectedOptions[0]?.hidden || !select.value)) {
-      select.value = firstVisible.value;
-      syncDealOptions(dialog);
-      syncStakeholderOptions(dialog);
+    const prev = select.value;
+    select.innerHTML = renderContactOptions(contacts, prev, resolveCompany, { query: input.value });
+    const first = [...select.options].find((option) => option.value);
+    if (input.value.trim() && first && !select.value) {
+      select.value = first.value;
+    }
+    if (select.value !== prev) {
+      syncDealOptions(scope);
+      syncStakeholderOptions(scope);
       rememberDraft(select.dataset.field, select.value);
-      clearFieldError(dialog, select.dataset.field);
+      clearFieldError(scope, select.dataset.field);
     }
   }
 
@@ -2156,9 +2180,12 @@ export function createApp({
   function onInput(event) {
     const el = event.target;
     if (cloud?.handleInput(el)) return;
+    if (el.dataset.pickerFor) {
+      filterPicker(el.closest('[role="dialog"], [role="alertdialog"], [data-panel]') || document, el);
+      return;
+    }
     const dialog = el.closest('[role="dialog"], [role="alertdialog"]');
     if (dialog) {
-      if (el.dataset.pickerFor) filterPicker(dialog, el);
       if (el.dataset.field) clearFieldError(dialog, el.dataset.field);
       if (ui.modal?.type === 'message' && el.dataset.field === 'message') {
         ui.modal.text = el.value;
@@ -2167,8 +2194,13 @@ export function createApp({
         rememberDraft(el.dataset.field, el.value);
       }
       if (ui.modal?.type === 'contact' && el.dataset.field === 'company') {
+        const companies = store.read('companies');
+        const datalist = dialog.querySelector('#company-options');
+        if (datalist && companies.length > COMPANY_DATALIST_THRESHOLD) {
+          datalist.innerHTML = renderCompanyDatalistOptions(companies, el.value);
+        }
         const hint = dialog.querySelector('[data-company-hint]');
-        if (hint) hint.innerHTML = companyHint(el.value, store.getAll('companies'));
+        if (hint) hint.innerHTML = companyHint(el.value, companies);
       }
       return;
     }

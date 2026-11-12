@@ -40,6 +40,7 @@ export class Store {
     this.storageKey = storageKey;
     this.recorder = recorder;
     this.listeners = new Set();
+    this.persisted = false;
     this.state = this.#load(seed);
     this.#persist();
   }
@@ -67,6 +68,7 @@ export class Store {
       this.#backup(raw, 'unreadable');
       return this.#fresh(seed);
     }
+    this.persisted = true;
     if (needsMigration(parsed)) {
       this.#backup(raw, `v${parsed.version}`);
       return migrate(parsed, { now: this.clock.now() });
@@ -77,10 +79,16 @@ export class Store {
   #persist() {
     try {
       this.storage.setItem(this.storageKey, JSON.stringify(this.state));
+      this.persisted = true;
     } catch (error) {
-      // In cloud mode, Cloudflare D1 is the master database. If the browser's localStorage
-      // quota (~5MB) is exceeded by a large tenant dataset, keep working in memory without crashing sync.
+      // In cloud mode, Cloudflare D1 is the master database. If localStorage quota (~5MB) is exceeded
+      // by a large tenant dataset, clear any stale localStorage copy and mark persisted = false so
+      // sync won't advance a disk cursor without the backing snapshot.
       if (!this.recorder) throw error;
+      this.persisted = false;
+      try {
+        this.storage.removeItem(this.storageKey);
+      } catch { /* ignore */ }
     }
   }
 
@@ -90,6 +98,19 @@ export class Store {
 
   #assert(collection) {
     if (!COLLECTIONS.includes(collection)) throw new Error(`unknown collection: ${collection}`);
+  }
+
+  /** Shallow copy for fast read-only rendering without cloning tens of thousands of records. */
+  read(collection) {
+    this.#assert(collection);
+    return [...this.state[collection]];
+  }
+
+  /** Shallow document snapshot for background cache serialization. */
+  readState() {
+    const doc = { settings: { ...this.state.settings }, version: this.state.version };
+    for (const collection of COLLECTIONS) doc[collection] = [...this.state[collection]];
+    return doc;
   }
 
   getAll(collection) {
@@ -195,8 +216,9 @@ export class Store {
     this.#notify({ type: 'import', collection: null, id: null });
   }
 
-  replaceState(state) {
-    this.state = { ...emptyState(), ...clone(state), version: CURRENT_VERSION };
+  replaceState(state, { detached = false } = {}) {
+    const source = detached ? state : clone(state);
+    this.state = { ...emptyState(), ...source, version: CURRENT_VERSION };
     this.#persist();
     this.#notify({ type: 'sync', collection: null, id: null });
   }

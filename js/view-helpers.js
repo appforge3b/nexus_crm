@@ -1,6 +1,6 @@
 import { avatarGradient, formatMoney, formatMoneyCompact, initials } from './format.js';
 import { esc, icon } from './markup.js';
-import { companyOf } from './companies.js';
+import { companyOf, indexCompanies, stakeholderEntries } from './companies.js';
 import { dueLabel, dueTone, shortDue } from './agenda.js';
 
 export const STAGE_COLOR = {
@@ -96,15 +96,112 @@ export function field(label, control, { required = false, wide = false, hint = '
   return `<label class="field ${wide ? 'wide' : ''}"><span>${esc(label)}${required ? ' <em class="req">*</em>' : ''}</span>${control}${hint}</label>`;
 }
 
-export function contactPicker(contacts, selectedId, fieldName = 'contact', companies = []) {
-  const sorted = [...contacts].sort((a, b) => a.name.localeCompare(b.name));
+export const PICKER_LIMIT = 100;
+export const COMPANY_DATALIST_THRESHOLD = 200;
+const COLLATOR = new Intl.Collator();
+
+function contactOptionMarkup(contact, resolveCompany, selectedId) {
+  const company = resolveCompany(contact);
+  const companyLabel = company?.name || contact?.company || '';
+  const companyId = company?.id || '';
+  return `<option value="${esc(contact.id)}" data-company="${esc(companyId)}" ${selectedId === contact.id ? 'selected' : ''}>${esc(contact.name)}${companyLabel ? ` — ${esc(companyLabel)}` : ''}</option>`;
+}
+
+/** Builds capped `<option>` markup for contact pickers, keeping `selectedId` visible when unfiltered. */
+export function renderContactOptions(contacts, selectedId, resolveCompany, { query = '', limit = PICKER_LIMIT, emptyLabel = 'Select a contact' } = {}) {
+  const needle = String(query ?? '').trim().toLowerCase();
+  const list = contacts ?? [];
+  const matches = needle
+    ? list.filter((contact) => {
+        const company = resolveCompany(contact);
+        const companyLabel = company?.name || contact?.company || '';
+        return `${contact.name}${companyLabel ? ` — ${companyLabel}` : ''}`.toLowerCase().includes(needle);
+      })
+    : [...list];
+  matches.sort((a, b) => COLLATOR.compare(a.name, b.name));
+  const sliced = matches.slice(0, limit);
+  if (!needle && selectedId && !sliced.some((contact) => contact.id === selectedId)) {
+    const selected = list.find((contact) => contact.id === selectedId);
+    if (selected) sliced.unshift(selected);
+  }
+  const headLabel = needle && !sliced.length ? 'No matching contacts' : emptyLabel;
+  return `<option value="">${esc(headLabel)}</option>${sliced.map((contact) => contactOptionMarkup(contact, resolveCompany, selectedId)).join('')}`;
+}
+
+/** Builds capped `<option>` markup for adding deal stakeholders, grouped by company. */
+export function renderStakeholderOptions(deal, contacts, resolveCompany, { query = '', limit = PICKER_LIMIT } = {}) {
+  const inDeal = new Set(stakeholderEntries(deal).map((entry) => entry.contactId));
+  const primary = (contacts ?? []).find((contact) => contact.id === deal.contactId) ?? null;
+  const company = (deal.companyId && resolveCompany.byId?.get(deal.companyId)) || resolveCompany(primary);
+  const needle = String(query ?? '').trim().toLowerCase();
+  const colleagues = [];
+  const others = [];
+  for (const contact of contacts ?? []) {
+    if (inDeal.has(contact.id)) continue;
+    const text = `${contact.name}${contact.title ? ` · ${contact.title}` : ''}`;
+    if (needle && !text.toLowerCase().includes(needle)) continue;
+    const cCompany = resolveCompany(contact);
+    if (company && cCompany?.id === company.id) colleagues.push(contact);
+    else others.push(contact);
+  }
+  colleagues.sort((a, b) => COLLATOR.compare(a.name, b.name));
+  others.sort((a, b) => COLLATOR.compare(a.name, b.name));
+  const shownOthers = others.slice(0, limit);
+  const option = (contact) => `<option value="${esc(contact.id)}">${esc(contact.name)}${contact.title ? ` · ${contact.title}` : ''}</option>`;
+  const head = needle && !colleagues.length && !shownOthers.length ? 'No matching contacts' : 'Add a stakeholder…';
+  return `<option value="">${esc(head)}</option>${
+    colleagues.length ? `<optgroup label="At ${esc(company.name)}">${colleagues.map(option).join('')}</optgroup>` : ''
+  }${
+    shownOthers.length ? `<optgroup label="${colleagues.length ? 'Everyone else' : 'Contacts'}">${shownOthers.map(option).join('')}</optgroup>` : ''
+  }`;
+}
+
+/** Builds `<option>` markup for `#company-options`, capping huge directories until typed. */
+export function renderCompanyDatalistOptions(companies, query = '', limit = PICKER_LIMIT) {
+  const list = companies ?? [];
+  if (list.length <= COMPANY_DATALIST_THRESHOLD) {
+    return [...list].sort((a, b) => COLLATOR.compare(a.name, b.name))
+      .map((company) => `<option value="${esc(company.name)}"></option>`)
+      .join('');
+  }
+  const needle = String(query ?? '').trim().toLowerCase();
+  if (!needle) return '';
+  return list
+    .filter((company) => company.name.toLowerCase().includes(needle))
+    .sort((a, b) => COLLATOR.compare(a.name, b.name))
+    .slice(0, limit)
+    .map((company) => `<option value="${esc(company.name)}"></option>`)
+    .join('');
+}
+
+export function contactPicker(contacts, selectedId, fieldName = 'contact', companies = [], resolveCompany = indexCompanies(companies)) {
+  const list = contacts ?? [];
+  const placeholder = list.length > PICKER_LIMIT
+    ? `Type to search ${list.length.toLocaleString()} contacts…`
+    : 'Type to filter contacts…';
   return `<div class="picker">
-    <input type="search" class="picker-search" data-picker-for="${fieldName}" placeholder="Type to filter contacts…" aria-label="Filter contacts">
-    <select data-field="${fieldName}" size="1"><option value="">Select a contact</option>${sorted.map((contact) => {
-      const company = companyName(contact, companies);
-      return `<option value="${esc(contact.id)}" data-company="${esc(companyOf(contact, companies)?.id || '')}" ${selectedId === contact.id ? 'selected' : ''}>${esc(contact.name)}${company ? ` — ${esc(company)}` : ''}</option>`;
-    }).join('')}</select>
+    <input type="search" class="picker-search" data-picker-for="${fieldName}" placeholder="${placeholder}" aria-label="Filter contacts">
+    <select data-field="${fieldName}" size="1">${renderContactOptions(list, selectedId, resolveCompany)}</select>
   </div>`;
+}
+
+/** Renders stakeholder checkboxes only for colleagues at `primaryCompanyId`, keeping `selectedPrimaryId` hidden. */
+export function renderStakeholderCheckboxes(contacts, primaryCompanyId, selectedPrimaryId, checkedIds, resolveCompany) {
+  if (!primaryCompanyId) return { html: '', hasVisible: false };
+  const matches = [];
+  let hasVisible = false;
+  for (const contact of contacts ?? []) {
+    const companyId = resolveCompany(contact)?.id || '';
+    if (companyId !== primaryCompanyId) continue;
+    matches.push(contact);
+    if (contact.id !== selectedPrimaryId) hasVisible = true;
+  }
+  matches.sort((a, b) => COLLATOR.compare(a.name, b.name));
+  const html = matches.map((contact) => {
+    const show = contact.id !== selectedPrimaryId;
+    return `<label class="tag-option person-option" data-person-company="${esc(primaryCompanyId)}" data-person="${esc(contact.id)}" ${show ? '' : 'hidden'}><input type="checkbox" data-stakeholder-option value="${esc(contact.id)}" ${checkedIds?.has(contact.id) ? 'checked' : ''}><span>${esc(contact.name)}</span></label>`;
+  }).join('');
+  return { html, hasVisible };
 }
 
 export function companyHint(value, companies) {

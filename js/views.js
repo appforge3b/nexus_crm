@@ -27,10 +27,13 @@ import {
   companyOf,
   customerCompanyId,
   dealsForCompany,
+  indexCompanies,
   openDealsForCompany,
   peopleAt,
   stakeholdersFor,
 } from './companies.js';
+
+const COLLATOR = new Intl.Collator();
 import {
   agendaForBriefing,
   doneOnly,
@@ -64,7 +67,11 @@ import {
   companyName,
   contactActions,
   contactById,
+  PICKER_LIMIT,
   contactPicker,
+  renderCompanyDatalistOptions,
+  renderStakeholderCheckboxes,
+  renderStakeholderOptions,
   dealSelect,
   excelBlock,
   excelPreview,
@@ -492,11 +499,9 @@ function stakeholderSection(deal, ctx) {
   const people = stakeholdersFor(deal, ctx.contacts);
   const inDeal = new Set(people.map((entry) => entry.contactId));
   const primary = contactById(ctx.contacts, deal.contactId);
-  const company = companyById(ctx.companies, deal.companyId) || companyOf(primary, ctx.companies);
-  const colleagues = company ? peopleAt(company, ctx.contacts, ctx.companies).filter((contact) => !inDeal.has(contact.id)) : [];
-  const others = [...ctx.contacts].filter((contact) => !inDeal.has(contact.id) && !colleagues.includes(contact))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  const option = (contact) => `<option value="${esc(contact.id)}">${esc(contact.name)}${contact.title ? ` · ${esc(contact.title)}` : ''}</option>`;
+  const resolveCompany = indexCompanies(ctx.companies);
+  const company = (deal.companyId && resolveCompany.byId.get(deal.companyId)) || resolveCompany(primary);
+  const hasAddable = (ctx.contacts ?? []).some((contact) => !inDeal.has(contact.id));
   return `<section class="drawer-section" data-region="stakeholders">
     <h3>People ${people.length > 1 ? `<span class="count-pill">${people.length}</span>` : ''}</h3>
     ${people.length ? `<ul class="person-list">${people.map(({ contact, role, primary: isPrimary }) => `
@@ -516,11 +521,10 @@ function stakeholderSection(deal, ctx) {
           <button type="button" class="icon-btn tiny danger" data-action="remove-stakeholder" data-deal-ref="${esc(deal.id)}" data-contact-ref="${esc(contact.id)}" aria-label="Remove ${esc(contact.name)} from this deal" title="Remove">${icon('close', 13)}</button>
         </span>`}
       </li>`).join('')}</ul>` : '<p class="muted small">Contact not found.</p>'}
-    ${colleagues.length || others.length ? `<div class="add-person" data-add-person="${esc(deal.id)}">
+    ${hasAddable ? `<div class="add-person" data-add-person="${esc(deal.id)}">
+      ${(ctx.contacts ?? []).length > PICKER_LIMIT ? `<input type="search" class="picker-search" data-picker-for="addStakeholder" data-deal-ref="${esc(deal.id)}" placeholder="Search ${ctx.contacts.length.toLocaleString()} contacts…" aria-label="Filter contacts to add">` : ''}
       <select data-field="addStakeholder" aria-label="Add a person to this deal">
-        <option value="">Add a stakeholder…</option>
-        ${colleagues.length ? `<optgroup label="At ${esc(company.name)}">${colleagues.map(option).join('')}</optgroup>` : ''}
-        ${others.length ? `<optgroup label="${colleagues.length ? 'Everyone else' : 'Contacts'}">${others.map(option).join('')}</optgroup>` : ''}
+        ${renderStakeholderOptions(deal, ctx.contacts, resolveCompany)}
       </select>
       <select data-field="addStakeholderRole" aria-label="Role">
         <option value="">Role</option>
@@ -606,7 +610,7 @@ function renderRoster(ctx, currency) {
     : route.params.contact ? renderContactPanel(ctx, route.params.contact, currency) : '';
 
   if (mode === 'companies') {
-    const visible = filterCompanies(companies, contacts, ui.rosterQuery).sort((a, b) => a.name.localeCompare(b.name));
+    const visible = filterCompanies(companies, contacts, ui.rosterQuery).sort((a, b) => COLLATOR.compare(a.name, b.name));
     const limit = ui.rosterLimit || 60;
     const page = visible.slice(0, limit);
     const hasMore = page.length < visible.length;
@@ -626,7 +630,7 @@ function renderRoster(ctx, currency) {
   }
 
   const visible = filterContacts(contacts, { query: ui.rosterQuery, status: ui.rosterStatus })
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => COLLATOR.compare(a.name, b.name));
   const limit = ui.rosterLimit || 60;
   const page = visible.slice(0, limit);
   const hasMore = page.length < visible.length;
@@ -1026,7 +1030,25 @@ function renderChronicle(ctx) {
         <label class="select-box">${icon('roster', 14)}
           <select data-field="chronContact" aria-label="Filter by contact">
             <option value="">All contacts</option>
-            ${[...contacts].sort((a, b) => a.name.localeCompare(b.name)).map((contact) => `<option value="${esc(contact.id)}" ${contact.id === contactFilter ? 'selected' : ''}>${esc(contact.name)}</option>`).join('')}
+            ${(() => {
+              let list;
+              if (contacts.length > PICKER_LIMIT) {
+                const activeIds = new Set(activities.map((a) => a.contactId).filter(Boolean));
+                if (contactFilter) activeIds.add(contactFilter);
+                const active = contacts.filter((c) => activeIds.has(c.id)).sort((a, b) => COLLATOR.compare(a.name, b.name)).slice(0, PICKER_LIMIT);
+                if (contactFilter && !active.some((c) => c.id === contactFilter)) {
+                  const selected = contacts.find((c) => c.id === contactFilter);
+                  if (selected) active.unshift(selected);
+                }
+                const fill = active.length < PICKER_LIMIT
+                  ? contacts.filter((c) => !activeIds.has(c.id)).sort((a, b) => COLLATOR.compare(a.name, b.name)).slice(0, PICKER_LIMIT - active.length)
+                  : [];
+                list = [...active, ...fill];
+              } else {
+                list = [...contacts].sort((a, b) => COLLATOR.compare(a.name, b.name));
+              }
+              return list.map((contact) => `<option value="${esc(contact.id)}" ${contact.id === contactFilter ? 'selected' : ''}>${esc(contact.name)}</option>`).join('');
+            })()}
           </select>
         </label>
       </div>
@@ -1412,7 +1434,7 @@ function renderModal(ctx) {
       ${field('Email', `<input data-field="email" type="email" value="${esc(c.email || '')}" placeholder="name@company.com">`)}
       ${field('Phone', `<input data-field="phone" type="tel" inputmode="tel" value="${esc(c.phone || '')}" placeholder="+91 …">`)}
       ${field('Company', `<input data-field="company" value="${esc(companyValue)}" list="company-options" autocomplete="off" placeholder="Start typing to pick or create">
-        <datalist id="company-options">${[...companies].sort((a, b) => a.name.localeCompare(b.name)).map((company) => `<option value="${esc(company.name)}"></option>`).join('')}</datalist>`,
+        <datalist id="company-options">${renderCompanyDatalistOptions(companies, companyValue)}</datalist>`,
         { hint: `<em class="field-hint" data-company-hint>${companyHint(companyValue, companies)}</em>` })}
       ${field('Title', `<input data-field="title" value="${esc(c.title || '')}" placeholder="e.g. CTO">`)}
       ${editing ? field('Status', `<select data-field="status">${['prospect', 'active', 'customer', 'inactive'].map((status) => `<option value="${status}" ${c.status === status ? 'selected' : ''}>${status[0].toUpperCase()}${status.slice(1)}</option>`).join('')}</select>`) : ''}
@@ -1441,14 +1463,14 @@ function renderModal(ctx) {
     iconName = 'pipeline';
     body = `<div class="form-grid">
       ${field('Title', `<input data-field="title" value="${esc(d.title || '')}" placeholder="What are you selling?" autocomplete="off">`, { required: true, wide: true })}
-      ${field('Contact', contactPicker(contacts, primaryId, 'contact', companies), { required: true, wide: true })}
-      <div class="field wide" data-stakeholder-field ${primaryCompany ? '' : 'hidden'}><span>Also involved <em class="muted small">People at the same company. Set roles from the deal panel.</em></span>
-        <div class="tag-picker">${[...contacts].sort((a, b) => a.name.localeCompare(b.name)).map((contact) => {
-          const companyId = companyOf(contact, companies)?.id || '';
-          const show = companyId && companyId === primaryCompany && contact.id !== primaryId;
-          return `<label class="tag-option person-option" data-person-company="${esc(companyId)}" data-person="${esc(contact.id)}" ${show ? '' : 'hidden'}><input type="checkbox" data-stakeholder-option value="${esc(contact.id)}" ${extra.has(contact.id) ? 'checked' : ''}><span>${esc(contact.name)}</span></label>`;
-        }).join('')}</div>
-      </div>
+      ${(() => {
+        const resolveCompany = indexCompanies(companies);
+        const stakeholders = renderStakeholderCheckboxes(contacts, primaryCompany, primaryId, extra, resolveCompany);
+        return `${field('Contact', contactPicker(contacts, primaryId, 'contact', companies, resolveCompany), { required: true, wide: true })}
+      <div class="field wide" data-stakeholder-field ${stakeholders.hasVisible ? '' : 'hidden'}><span>Also involved <em class="muted small">People at the same company. Set roles from the deal panel.</em></span>
+        <div class="tag-picker">${stakeholders.html}</div>
+      </div>`;
+      })()}
       ${field('Value', `<input data-field="value" type="number" min="0" step="1000" value="${esc(d.value ?? '')}" placeholder="0">`, { required: true })}
       ${field('Stage', `<select data-field="stage">${STAGES.filter((s) => editing || s !== 'lost').map((s) => `<option value="${s}" ${s === stage ? 'selected' : ''}>${esc(stageLabel(settings, s))}</option>`).join('')}</select>`)}
       ${field('Expected Close Date', `<input data-field="expectedCloseDate" type="date" value="${esc(d.expectedCloseDate || '')}">`)}
